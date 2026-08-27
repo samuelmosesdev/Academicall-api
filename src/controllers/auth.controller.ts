@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import jwt from "jsonwebtoken";
 import { Role } from "@prisma/client";
+import { OAuth2Client } from "google-auth-library";
 import { verifyFirebaseIdToken, isFirebaseEnabled } from "../lib/firebase";
 
 const VERIFICATION_TTL_MS = 15 * 60 * 1000;
@@ -196,6 +197,61 @@ export async function firebaseLogin(req: Request, res: Response) {
     }
     console.error("Firebase login failed:", err);
     return res.status(401).json({ error: "Invalid or expired Firebase ID token" });
+  }
+}
+
+export async function googleLogin(req: Request, res: Response) {
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      return res.status(503).json({ error: "Google sign-in is not configured on the API" });
+    }
+
+    const credential = z.string().min(1).parse(req.body?.credential || req.body?.idToken);
+    const client = new OAuth2Client(clientId);
+    const ticket = await client.verifyIdToken({ idToken: credential, audience: clientId });
+    const payload = ticket.getPayload();
+    if (!payload?.sub || !payload.email) {
+      return res.status(401).json({ error: "Google account details are unavailable" });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { OR: [{ googleUid: payload.sub }, { email: payload.email }] },
+    });
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          googleUid: payload.sub,
+          email: payload.email,
+          name: payload.name || payload.email.split("@")[0],
+          photoUrl: payload.picture,
+          emailVerified: payload.email_verified ?? false,
+          role: "user",
+          plan: "free",
+        },
+      });
+    } else {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          googleUid: payload.sub,
+          emailVerified: payload.email_verified ?? user.emailVerified,
+          ...(payload.name && !user.name ? { name: payload.name } : {}),
+          ...(payload.picture && !user.photoUrl ? { photoUrl: payload.picture } : {}),
+        },
+      });
+    }
+
+    if (user.status !== "active") {
+      return res.status(401).json({ error: "User not found or inactive" });
+    }
+    return res.json({ token: signToken(user), user: publicUser(user) });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "Google credential is required" });
+    }
+    console.error("Google login failed:", err);
+    return res.status(401).json({ error: "Invalid or expired Google credential" });
   }
 }
 

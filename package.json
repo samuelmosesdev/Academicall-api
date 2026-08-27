@@ -14,7 +14,13 @@
     "db:seed": "ts-node prisma/seed.ts",
     "migrate:firestore": "node scripts/migrate-firestore-to-postgres.mjs"
   },
-  "keywords": ["api", "express", "prisma", "postgresql", "academicall"],
+  "keywords": [
+    "api",
+    "express",
+    "prisma",
+    "postgresql",
+    "academicall"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
@@ -24,6 +30,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "firebase-admin": "^13.2.0",
+    "google-auth-library": "^11.0.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
