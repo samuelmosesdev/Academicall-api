@@ -63,8 +63,12 @@ You should see:
 2. Set the API service to use the included `Dockerfile`.
 3. Add `DATABASE_URL` from the Railway PostgreSQL service, plus a long random
   `JWT_SECRET`, `NODE_ENV=production`, and the deployed frontend origin as
-  `CORS_ORIGIN`.
-4. Deploy and verify `/api/v1/health` returns `200`.
+  `CORS_ORIGIN`. For the live site, use `CORS_ORIGIN=https://academicall.site`
+  (add `https://www.academicall.site` too if that hostname is enabled).
+4. Configure Brevo transactional email variables on the API service:
+   `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, and optionally
+   `BREVO_SENDER_NAME=Academicall`. The sender must be verified in Brevo.
+5. Deploy and verify `/api/v1/health` returns `200`.
 
 The container runs `prisma db push` before starting the API. Review the schema
 before the first production deploy and take a database backup before future
@@ -83,6 +87,8 @@ Health check: http://localhost:4000/api/v1/health
 | POST | `/api/v1/auth/register` | — | Register with email + password |
 | POST | `/api/v1/auth/login` | — | Login → returns JWT |
 | GET | `/api/v1/auth/me` | Bearer | Current user |
+| POST | `/api/v1/auth/verification/send` | Bearer | Send a 6-digit email code |
+| POST | `/api/v1/auth/verification/verify` | Bearer | Verify the email code |
 | GET | `/api/v1/users` | Staff | List users |
 | PATCH | `/api/v1/users/me` | Bearer | Update own profile |
 | GET | `/api/v1/documents` | Bearer | List documents |

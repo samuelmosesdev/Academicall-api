@@ -5,6 +5,10 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { Role } from "@prisma/client";
 
+const VERIFICATION_TTL_MS = 15 * 60 * 1000;
+const RESEND_COOLDOWN_MS = 45 * 1000;
+const MAX_VERIFICATION_ATTEMPTS = 5;
+
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
@@ -46,6 +50,61 @@ function publicUser(user: {
   };
 }
 
+function verificationConfig() {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  if (!apiKey || !senderEmail) {
+    throw new Error("Email verification is not configured on the API");
+  }
+  return { apiKey, senderEmail, senderName: process.env.BREVO_SENDER_NAME || "Academicall" };
+}
+
+async function sendVerificationCode(user: { id: string; email: string; name: string | null }) {
+  const config = verificationConfig();
+  const existing = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { emailVerificationSentAt: true },
+  });
+  if (
+    existing?.emailVerificationSentAt &&
+    Date.now() - existing.emailVerificationSentAt.getTime() < RESEND_COOLDOWN_MS
+  ) {
+    throw Object.assign(new Error("Please wait before requesting another code"), { status: 429 });
+  }
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      emailVerificationHash: await bcrypt.hash(code, 10),
+      emailVerificationExpiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
+      emailVerificationSentAt: new Date(),
+      emailVerificationAttempts: 0,
+    },
+  });
+
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "api-key": config.apiKey,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      sender: { name: config.senderName, email: config.senderEmail },
+      to: [{ email: user.email, name: user.name || user.email }],
+      subject: "Your Academicall verification code",
+      htmlContent: `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px"><h1 style="color:#0f9f8a;font-size:22px">Academicall</h1><p>Use this code to verify your email. It expires in <strong>15 minutes</strong>.</p><p style="font-size:32px;letter-spacing:8px;font-weight:700;color:#0b7a6a">${code}</p><p style="color:#6b7f76;font-size:13px">If you did not create an Academicall account, you can ignore this email.</p></div>`,
+      textContent: `Academicall verification code: ${code}\n\nExpires in 15 minutes.`,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 200);
+    throw Object.assign(new Error(`Email provider error: ${detail}`), { status: 502 });
+  }
+}
+
 export async function register(req: Request, res: Response) {
   try {
     const body = registerSchema.parse(req.body);
@@ -81,7 +140,7 @@ export async function register(req: Request, res: Response) {
         role: "user",
         plan: "free",
         uniqueId,
-        emailVerified: true,
+        emailVerified: false,
       },
     });
 
@@ -98,6 +157,63 @@ export async function register(req: Request, res: Response) {
     console.error(err);
     res.status(500).json({ error: "Registration failed" });
   }
+}
+
+export async function sendVerification(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, email: true, name: true, emailVerified: true },
+    });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (user.emailVerified) return res.json({ ok: true, verified: true });
+    await sendVerificationCode(user);
+    return res.json({ ok: true, message: "Verification code sent" });
+  } catch (err) {
+    const error = err as Error & { status?: number };
+    return res.status(error.status || 500).json({ error: error.message || "Could not send verification code" });
+  }
+}
+
+export async function verifyEmail(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  const code = String(req.body?.code || "").trim();
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: "Code must be 6 digits" });
+
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+  if (user.emailVerified) return res.json({ ok: true, verified: true });
+  if (!user.emailVerificationHash || !user.emailVerificationExpiresAt) {
+    return res.status(400).json({ error: "No active code. Request a new one." });
+  }
+  if (user.emailVerificationExpiresAt.getTime() < Date.now()) {
+    return res.status(400).json({ error: "Code expired. Request a new one." });
+  }
+  if (user.emailVerificationAttempts >= MAX_VERIFICATION_ATTEMPTS) {
+    return res.status(429).json({ error: "Too many attempts. Request a new code." });
+  }
+
+  const matches = await bcrypt.compare(code, user.emailVerificationHash);
+  if (!matches) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerificationAttempts: { increment: 1 } },
+    });
+    return res.status(400).json({ error: "Invalid code" });
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      emailVerified: true,
+      emailVerificationHash: null,
+      emailVerificationExpiresAt: null,
+      emailVerificationSentAt: null,
+      emailVerificationAttempts: 0,
+    },
+  });
+  return res.json({ ok: true, verified: true });
 }
 
 export async function login(req: Request, res: Response) {

@@ -22,6 +22,8 @@ router.get("/health", (_req, res) => {
 router.post("/auth/register", authCtrl.register);
 router.post("/auth/login", authCtrl.login);
 router.get("/auth/me", authenticate, authCtrl.me);
+router.post("/auth/verification/send", authenticate, authCtrl.sendVerification);
+router.post("/auth/verification/verify", authenticate, authCtrl.verifyEmail);
 
 // Users
 router.get("/users/me", authenticate, authCtrl.me);

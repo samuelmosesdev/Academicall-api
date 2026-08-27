@@ -46,6 +46,10 @@ model User {
   status                  UserStatus @default(active)
   uniqueId                String?    @unique // e.g. UAR-24-8831
   emailVerified           Boolean    @default(false)
+  emailVerificationHash   String?
+  emailVerificationExpiresAt DateTime?
+  emailVerificationSentAt DateTime?
+  emailVerificationAttempts Int      @default(0)
   profileComplete         Boolean    @default(false)
   department              String?
   faculty                 String?
