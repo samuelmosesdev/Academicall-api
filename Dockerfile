@@ -20,4 +20,4 @@ COPY --from=build /app/dist ./dist
 COPY prisma ./prisma
 
 EXPOSE 4000
-CMD ["sh", "-c", "npx prisma db push && node dist/server.js"]
+CMD ["sh", "-c", "node dist/server.js & server_pid=$!; npx prisma db push; migration_status=$?; wait $server_pid; exit $migration_status"]
