@@ -38,7 +38,7 @@ enum NotificationType {
 model User {
   id                      String     @id @default(uuid())
   firebaseUid             String?    @unique // for hybrid auth bridge
-  googleUid               String?    @unique // for direct Google Identity Services auth
+  googleUid               String? // for direct Google Identity Services auth; email is the unique account key
   email                   String     @unique
   passwordHash            String? // null when using only Firebase
   name                    String?
