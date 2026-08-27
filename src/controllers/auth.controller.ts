@@ -52,7 +52,7 @@ function publicUser(user: {
 
 function verificationConfig() {
   const apiKey = process.env.BREVO_API_KEY;
-  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || "noreply@academicall.site";
   if (!apiKey || !senderEmail) {
     throw new Error("Email verification is not configured on the API");
   }
@@ -92,6 +92,7 @@ async function sendVerificationCode(user: { id: string; email: string; name: str
     },
     body: JSON.stringify({
       sender: { name: config.senderName, email: config.senderEmail },
+      replyTo: { email: process.env.BREVO_REPLY_TO_EMAIL || "noreply@academicall.site", name: "Academicall" },
       to: [{ email: user.email, name: user.name || user.email }],
       subject: "Your Academicall verification code",
       htmlContent: `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px"><h1 style="color:#0f9f8a;font-size:22px">Academicall</h1><p>Use this code to verify your email. It expires in <strong>15 minutes</strong>.</p><p style="font-size:32px;letter-spacing:8px;font-weight:700;color:#0b7a6a">${code}</p><p style="color:#6b7f76;font-size:13px">If you did not create an Academicall account, you can ignore this email.</p></div>`,

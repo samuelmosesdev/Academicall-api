@@ -66,8 +66,10 @@ You should see:
   `CORS_ORIGIN`. For the live site, use `CORS_ORIGIN=https://academicall.site`
   (add `https://www.academicall.site` too if that hostname is enabled).
 4. Configure Brevo transactional email variables on the API service:
-   `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, and optionally
-   `BREVO_SENDER_NAME=Academicall`. The sender must be verified in Brevo.
+  `BREVO_API_KEY`, `BREVO_SENDER_EMAIL=noreply@academicall.site`, and
+  `BREVO_REPLY_TO_EMAIL=noreply@academicall.site`, plus optionally
+  `BREVO_SENDER_NAME=Academicall`. The sender/domain must be verified in Brevo;
+  do not use Brevo's `bounces-...` address as the sender.
 5. Deploy and verify `/api/v1/health` returns `200`.
 
 The container runs `prisma db push` before starting the API. Review the schema
