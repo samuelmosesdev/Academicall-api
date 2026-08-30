@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
-import { verifyFirebaseIdToken } from "../lib/firebase";
 import { Role } from "@prisma/client";
 
 interface JwtPayload {
@@ -39,62 +38,13 @@ export async function authenticate(
         id: user.id,
         email: user.email,
         role: user.role,
-        firebaseUid: user.firebaseUid,
       };
       return next();
     } catch {
-      // not a valid JWT – try Firebase ID token
+      // The API accepts JWT credentials only.
     }
 
-    // 2. Try Firebase ID token (hybrid mode)
-    try {
-      const decoded = await verifyFirebaseIdToken(token);
-      let user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { firebaseUid: decoded.uid },
-            { email: decoded.email ?? undefined },
-          ],
-        },
-      });
-
-      // Auto-provision on first Firebase login if missing
-      if (!user && decoded.email) {
-        user = await prisma.user.create({
-          data: {
-            firebaseUid: decoded.uid,
-            email: decoded.email,
-            name: decoded.name || decoded.email.split("@")[0],
-            emailVerified: decoded.email_verified ?? false,
-            role: "user",
-            plan: "free",
-          },
-        });
-      }
-
-      if (!user || user.status !== "active") {
-        return res.status(401).json({ error: "User not found or inactive" });
-      }
-
-      // Keep firebaseUid in sync
-      if (!user.firebaseUid) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { firebaseUid: decoded.uid },
-        });
-      }
-
-      req.user = {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        firebaseUid: user.firebaseUid,
-      };
-      return next();
-    } catch (fbErr) {
-      console.warn("Token verification failed:", (fbErr as Error).message);
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
+    return res.status(401).json({ error: "Invalid or expired token" });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Authentication error" });

@@ -5,11 +5,13 @@ import { prisma } from "../lib/prisma";
 import jwt from "jsonwebtoken";
 import { Role } from "@prisma/client";
 import { OAuth2Client } from "google-auth-library";
+import crypto from "node:crypto";
 import { verifyFirebaseIdToken, isFirebaseEnabled } from "../lib/firebase";
 
 const VERIFICATION_TTL_MS = 15 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 45 * 1000;
 const MAX_VERIFICATION_ATTEMPTS = 5;
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 
 function signToken(user: { id: string; email: string; role: Role }) {
   return jwt.sign(
@@ -28,6 +30,14 @@ function publicUser(user: {
   uniqueId: string | null;
   emailVerified?: boolean;
   profileComplete?: boolean;
+  status?: string;
+  department?: string | null;
+  faculty?: string | null;
+  level?: string | null;
+  matricNumber?: string | null;
+  phone?: string | null;
+  photoUrl?: string | null;
+  mustChangePassword?: boolean;
 }) {
   return {
     id: user.id,
@@ -38,18 +48,31 @@ function publicUser(user: {
     uniqueId: user.uniqueId,
     emailVerified: user.emailVerified,
     profileComplete: user.profileComplete,
+    status: user.status,
+    department: user.department,
+    faculty: user.faculty,
+    level: user.level,
+    matricNumber: user.matricNumber,
+    phone: user.phone,
+    photoUrl: user.photoUrl,
+    mustChangePassword: user.mustChangePassword,
   };
 }
 
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
   password: z.string().min(6),
   name: z.string().optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  identifier: z.string().trim().min(1),
   password: z.string().min(1),
+});
+
+const passwordChangeSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
 });
 
 export async function register(req: Request, res: Response) {
@@ -63,20 +86,6 @@ export async function register(req: Request, res: Response) {
 
     const passwordHash = await bcrypt.hash(body.password, 12);
 
-    // Generate uniqueId → UAR-26-XXXX
-    const year = new Date().getFullYear().toString().slice(-2);
-    let uniqueId: string | null = null;
-
-    for (let i = 0; i < 10; i++) {
-      const random = Math.floor(1000 + Math.random() * 9000);
-      const candidate = `UAR-${year}-${random}`;
-      const exists = await prisma.user.findUnique({ where: { uniqueId: candidate } });
-      if (!exists) {
-        uniqueId = candidate;
-        break;
-      }
-    }
-
     const user = await prisma.user.create({
       data: {
         email: body.email,
@@ -84,7 +93,7 @@ export async function register(req: Request, res: Response) {
         name: body.name || body.email.split("@")[0],
         role: "user",
         plan: "free",
-        uniqueId,
+        uniqueId: null,
       },
     });
 
@@ -92,14 +101,7 @@ export async function register(req: Request, res: Response) {
 
     return res.status(201).json({
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        plan: user.plan,
-        uniqueId: user.uniqueId,
-      },
+      user: publicUser(user),
     });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -114,9 +116,16 @@ export async function login(req: Request, res: Response) {
   try {
     const body = loginSchema.parse(req.body);
 
-    const user = await prisma.user.findUnique({ where: { email: body.email } });
+    const identifier = body.identifier.toUpperCase();
+    const user = body.identifier.includes("@")
+      ? await prisma.user.findUnique({ where: { email: body.identifier.toLowerCase() } })
+      : await prisma.user.findUnique({ where: { uniqueId: identifier } });
     if (!user || !user.passwordHash) {
       return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    if (user.status !== "active") {
+      return res.status(401).json({ error: "User not found or inactive" });
     }
 
     const valid = await bcrypt.compare(body.password, user.passwordHash);
@@ -126,23 +135,33 @@ export async function login(req: Request, res: Response) {
 
     const token = signToken(user);
 
-    return res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        plan: user.plan,
-        uniqueId: user.uniqueId,
-      },
-    });
+    return res.json({ token, user: publicUser(user) });
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: err.errors });
     }
     console.error(err);
     return res.status(500).json({ error: "Login failed" });
+  }
+}
+
+export async function changePassword(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  try {
+    const body = passwordChangeSchema.parse(req.body);
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user?.passwordHash || !(await bcrypt.compare(body.currentPassword, user.passwordHash))) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await bcrypt.hash(body.newPassword, 12), passwordChangedAt: new Date(), mustChangePassword: false },
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+    console.error(err);
+    return res.status(500).json({ error: "Could not change password" });
   }
 }
 
@@ -261,6 +280,72 @@ function verificationConfig() {
   return { apiKey, senderEmail: process.env.BREVO_SENDER_EMAIL || "noreply@academicall.site" };
 }
 
+async function sendPasswordResetEmail(email: string, token: string) {
+  const config = verificationConfig();
+  const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password?token=${encodeURIComponent(token)}`;
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: { accept: "application/json", "api-key": config.apiKey, "content-type": "application/json" },
+    body: JSON.stringify({
+      sender: { name: process.env.BREVO_SENDER_NAME || "Academicall", email: config.senderEmail },
+      replyTo: { email: process.env.BREVO_REPLY_TO_EMAIL || config.senderEmail },
+      to: [{ email }],
+      subject: "Reset your Academicall password",
+      textContent: `Reset your Academicall password using this link:\n\n${resetUrl}\n\nThis link expires in one hour.`,
+    }),
+  });
+  if (!response.ok) throw Object.assign(new Error("Email provider error"), { status: 502 });
+}
+
+export async function requestPasswordReset(req: Request, res: Response) {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!z.string().email().safeParse(email).success) {
+    return res.status(400).json({ error: "Enter a valid email address" });
+  }
+
+  // Always return the same response for unknown addresses.
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (user?.status === "active") {
+    const token = crypto.randomBytes(32).toString("hex");
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetHash: crypto.createHash("sha256").update(token).digest("hex"),
+        passwordResetExpiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+      },
+    });
+    await sendPasswordResetEmail(user.email, token);
+  }
+  return res.json({ ok: true, message: "If an account exists, a reset link has been sent." });
+}
+
+export async function confirmPasswordReset(req: Request, res: Response) {
+  const token = String(req.body?.token || "");
+  const password = String(req.body?.password || "");
+  if (token.length < 32 || password.length < 8) {
+    return res.status(400).json({ error: "A valid token and password of at least 8 characters are required" });
+  }
+  const user = await prisma.user.findFirst({
+    where: {
+      passwordResetHash: crypto.createHash("sha256").update(token).digest("hex"),
+      passwordResetExpiresAt: { gt: new Date() },
+      status: "active",
+    },
+  });
+  if (!user) return res.status(400).json({ error: "Reset link is invalid or expired" });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: await bcrypt.hash(password, 12),
+      passwordChangedAt: new Date(),
+      mustChangePassword: false,
+      passwordResetHash: null,
+      passwordResetExpiresAt: null,
+    },
+  });
+  return res.json({ ok: true });
+}
+
 async function sendVerificationCode(user: { id: string; email: string; name: string | null }) {
   const config = verificationConfig();
   const existing = await prisma.user.findUnique({ where: { id: user.id }, select: { emailVerificationSentAt: true } });
@@ -327,6 +412,16 @@ export async function me(req: Request, res: Response) {
         plan: true,
         uniqueId: true,
         createdAt: true,
+        status: true,
+        emailVerified: true,
+        profileComplete: true,
+        department: true,
+        faculty: true,
+        level: true,
+        matricNumber: true,
+        phone: true,
+        photoUrl: true,
+        mustChangePassword: true,
       },
     });
 

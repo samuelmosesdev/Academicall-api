@@ -7,7 +7,6 @@ declare global {
         id: string;
         email: string;
         role: Role;
-        firebaseUid?: string | null;
       };
     }
   }

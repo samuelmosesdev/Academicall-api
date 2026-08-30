@@ -4,16 +4,24 @@ import fs from "fs";
 
 let initialized = false;
 
+function parseServiceAccount(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return null;
+  const serviceAccount = JSON.parse(trimmed);
+  if (serviceAccount.private_key) {
+    serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+  }
+  return serviceAccount;
+}
+
 export function initFirebaseAdmin() {
   if (initialized) return;
 
   try {
-    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT;
-    if (serviceAccountJson) {
-      const serviceAccount = JSON.parse(serviceAccountJson);
-      if (serviceAccount.private_key) {
-        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
-      }
+    const serviceAccountRaw =
+      process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT;
+    const serviceAccount = serviceAccountRaw ? parseServiceAccount(serviceAccountRaw) : null;
+    if (serviceAccount) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
         projectId: process.env.FIREBASE_PROJECT_ID || serviceAccount.project_id,
@@ -25,9 +33,10 @@ export function initFirebaseAdmin() {
 
     const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
       ? path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS)
-      : null;
+      : serviceAccountRaw && !serviceAccountRaw.trim().startsWith("{")
+        ? path.resolve(serviceAccountRaw)
+        : null;
 
-    // Only try to load the file if it actually exists
     if (credPath && fs.existsSync(credPath)) {
       admin.initializeApp({
         credential: admin.credential.cert(credPath),
@@ -38,7 +47,6 @@ export function initFirebaseAdmin() {
       return;
     }
 
-    // Optional: allow project-id-only in some environments
     if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_ALLOW_PROJECT_ID_ONLY === "true") {
       admin.initializeApp({
         projectId: process.env.FIREBASE_PROJECT_ID,
@@ -48,7 +56,6 @@ export function initFirebaseAdmin() {
       return;
     }
 
-    // Clean silent skip
     console.log("[firebase-admin] skipped - no service account credentials found (JWT-only mode)");
   } catch (err) {
     console.warn("[firebase-admin] failed to initialize:", (err as Error).message);

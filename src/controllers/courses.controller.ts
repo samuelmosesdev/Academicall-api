@@ -16,7 +16,7 @@ export async function listCourses(req: Request, res: Response) {
         }
       : undefined,
     orderBy: { createdAt: "desc" },
-    take: 100,
+    take: 5000,
   });
 
   res.json({ courses });
@@ -34,11 +34,18 @@ export async function getCourse(req: Request, res: Response) {
 
 const createSchema = z.object({
   title: z.string().min(1),
-  code: z.string().optional(),
-  description: z.string().optional(),
-  thumbnailUrl: z.string().url().optional(),
-  category: z.string().optional(),
-  source: z.string().optional(),
+  code: z.string().optional().nullable(),
+  faculty: z.string().optional().nullable(),
+  department: z.string().optional().nullable(),
+  level: z.string().optional().nullable(),
+  semester: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  thumbnailUrl: z.string().url().optional().nullable(),
+  category: z.string().optional().nullable(),
+  source: z.string().optional().nullable(),
+  published: z.boolean().optional(),
+  approvedBy: z.string().optional().nullable(),
+  requestedBy: z.string().optional().nullable(),
 });
 
 export async function createCourse(req: Request, res: Response) {
@@ -57,9 +64,10 @@ export async function createCourse(req: Request, res: Response) {
 
 export async function updateCourse(req: Request, res: Response) {
   try {
+    const body = createSchema.partial().parse(req.body);
     const course = await prisma.course.update({
       where: { id: String(req.params.id) },
-      data: req.body,
+      data: body,
     });
     res.json({ course });
   } catch (err) {

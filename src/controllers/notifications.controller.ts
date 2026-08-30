@@ -61,11 +61,12 @@ export async function archiveNotification(req: Request, res: Response) {
 }
 
 const createSchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.string().optional().nullable(),
   title: z.string().min(1),
   body: z.string().optional(),
-  type: z.enum(["general", "payment_claim", "class_event", "announcement", "system"]).optional(),
+  type: z.string().optional(),
   data: z.any().optional(),
+  readByUser: z.boolean().optional(),
 });
 
 export async function createNotification(req: Request, res: Response) {
@@ -74,10 +75,21 @@ export async function createNotification(req: Request, res: Response) {
   try {
     const body = createSchema.parse(req.body);
 
+    const userId = body.userId || ( ["admin", "alphaAgent", "agent"].includes(req.user.role)
+      ? req.user.id
+      : (await prisma.user.findFirst({ where: { role: "admin", status: "active" }, select: { id: true } }))?.id || req.user.id);
+    if (userId !== req.user.id && !["admin", "alphaAgent", "agent"].includes(req.user.role)) {
+      return res.status(403).json({ error: "Cannot notify another user" });
+    }
+    const allowedTypes = ["general", "payment_claim", "class_event", "announcement", "system"] as const;
     const notif = await prisma.notification.create({
       data: {
-        ...body,
-        type: body.type || "general",
+        userId,
+        title: body.title,
+        body: body.body,
+        data: body.data,
+        readByUser: body.readByUser ?? false,
+        type: (allowedTypes.includes(body.type as typeof allowedTypes[number]) ? body.type : "general") as typeof allowedTypes[number],
         createdById: req.user.id,
       },
     });
@@ -91,3 +103,21 @@ export async function createNotification(req: Request, res: Response) {
     res.status(500).json({ error: "Create failed" });
   }
 }
+
+const tokenSchema = z.object({ token: z.string().min(1), uid: z.string().optional(), platform: z.string().optional() });
+
+export async function registerDeviceToken(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  const body = tokenSchema.parse(req.body);
+  await prisma.user.update({ where: { id: req.user.id }, data: { deviceToken: body.token, fcmToken: body.token } });
+  res.json({ ok: true });
+}
+
+export async function removeDeviceToken(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  await prisma.user.update({ where: { id: req.user.id }, data: { deviceToken: null, fcmToken: null } });
+  res.json({ ok: true });
+}
+
+export const registerFcmToken = registerDeviceToken;
+export const removeFcmToken = removeDeviceToken;

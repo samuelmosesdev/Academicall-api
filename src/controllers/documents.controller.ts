@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { Prisma } from "@prisma/client";
 
 export async function listDocuments(req: Request, res: Response) {
   const courseId = req.query.courseId as string | undefined;
@@ -41,9 +42,15 @@ const createSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   fileUrl: z.string().url().optional(),
-  thumbnailUrl: z.string().url().optional(),
-  courseId: z.string().uuid().optional(),
+  thumbnailUrl: z.string().url().optional().nullable(),
+  courseId: z.string().min(1).optional().nullable(),
   source: z.string().optional(),
+  fileName: z.string().optional().nullable(),
+  fileSize: z.number().int().nonnegative().optional().nullable(),
+  tags: z.array(z.string()).optional().nullable(),
+  faculty: z.string().optional().nullable(),
+  department: z.string().optional().nullable(),
+  level: z.string().optional().nullable(),
 });
 
 export async function createDocument(req: Request, res: Response) {
@@ -55,6 +62,7 @@ export async function createDocument(req: Request, res: Response) {
     const doc = await prisma.document.create({
       data: {
         ...body,
+        tags: body.tags === null ? Prisma.JsonNull : body.tags,
         uploadedById: req.user.id,
         source: body.source || (req.user.role === "courseRep" ? "courseRep" : "staff"),
       },

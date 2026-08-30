@@ -4,7 +4,7 @@ API-first backend for **Academicall / UofA Readers**.
 
 Stack: **Node.js + Express + TypeScript + Prisma + PostgreSQL**
 
-Hybrid auth: **JWT** (email/password) **+ Firebase ID tokens** (so your existing web app can switch gradually).
+Authentication: **JWT** (email/password) with Google credential sign-in through the API.
 
 ---
 
@@ -31,11 +31,6 @@ cp .env.example .env
 
 The default `.env` already points at the Docker Postgres.  
 You only need to change `JWT_SECRET` to something random.
-
-(Optional) For Firebase ID token support:
-- Download a service account JSON from Firebase Console → Project settings → Service accounts
-- Save it as `firebase-service-account.json` in the project root
-- Set `FIREBASE_PROJECT_ID` and `GOOGLE_APPLICATION_CREDENTIALS=./firebase-service-account.json` in `.env`
 
 ### 3. Install & prepare database
 
@@ -127,7 +122,7 @@ docker-compose.yml
 1. Test register / login / me with curl or Postman / Thunder Client.
 2. Point a small part of your React app at this API (start with `/auth/me` or documents list).
 3. Add more endpoints (CBT questions, payments, staff chat, etc.) following the same pattern.
-4. When ready, migrate data from Firestore → Postgres (export scripts can be added later).
+4. The one-off Firestore import is available through `npm run migrate:firestore`; runtime API traffic uses PostgreSQL only.
 5. Deploy the API (Railway, Render, Fly.io, etc.) and switch the frontend permanently.
 
 ---
@@ -135,6 +130,6 @@ docker-compose.yml
 ## Notes
 
 - Roles match your current system: `admin`, `alphaAgent`, `agent`, `courseRep`, `user`.
-- `uniqueId` can be set only once by the user (same rule as your Firestore rules).
+- `uniqueId` can be set only once by the user.
 - Soft-delete style fields exist on notifications.
 - This is a solid foundation, not a full 1:1 port of every Firebase collection yet.

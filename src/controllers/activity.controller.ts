@@ -11,6 +11,7 @@ const activitySchema = z.object({
 
 export async function listActivity(req: Request, res: Response) {
   const activity = await prisma.activityLog.findMany({
+    where: req.query.agentId ? { meta: { path: ["targetUid"], equals: String(req.query.agentId) } } : undefined,
     include: { user: { select: { id: true, name: true, email: true } } },
     orderBy: { createdAt: "desc" }, take: 200,
   });

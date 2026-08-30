@@ -41,6 +41,10 @@ model User {
   googleUid               String? // for direct Google Identity Services auth; email is the unique account key
   email                   String     @unique
   passwordHash            String? // null when using only Firebase
+  passwordChangedAt       DateTime?
+  mustChangePassword      Boolean    @default(false)
+  passwordResetHash       String?
+  passwordResetExpiresAt  DateTime?
   name                    String?
   role                    Role       @default(user)
   plan                    Plan       @default(free)
@@ -66,6 +70,11 @@ model User {
   showPhone               Boolean    @default(false)
   allowAnonymousComments  Boolean    @default(false)
   photoUrl                String?
+  avatarUrl               String?
+  settings                Json?
+  fcmToken                String?
+  deviceToken             String?
+  fcmTokens               Json?
   coursesEnrolledCount    Int        @default(0)
   questionsPracticedCount Int        @default(0)
   studyStreakDays         Int        @default(0)
@@ -74,6 +83,13 @@ model User {
   lastActiveAt            DateTime?
   courseRepMeta           Json?
   assignedBy              String?
+  assignedAt              DateTime?
+  agentDomain             String?
+  createdByAdmin          Boolean    @default(false)
+  createdByUid            String?
+  canImportAI             Boolean    @default(true)
+  autoPublish             Boolean    @default(false)
+  customCourses           Json?
   createdAt               DateTime   @default(now())
   updatedAt               DateTime   @updatedAt
 
@@ -87,6 +103,8 @@ model User {
   timetableEvents      TimetableEvent[]
   materialSaves        MaterialSave[]
   requests             Request[]        @relation("Requester")
+  profileChangeRequests ProfileChangeRequest[]
+  subscriptions       Subscription[]
 
   @@index([role])
   @@index([department])
@@ -100,12 +118,22 @@ model Document {
   description  String?
   fileUrl      String?
   thumbnailUrl String?
+  fileName     String?
+  fileSize     Int?
+  tags         Json?
+  faculty      String?
+  department   String?
+  level        String?
   source       String? // "courseRep" | "admin" | "agent"
   uploadedById String
   uploadedBy   User     @relation("UploadedBy", fields: [uploadedById], references: [id])
   courseId     String?
   course       Course?  @relation(fields: [courseId], references: [id])
   openCount    Int      @default(0)
+  questionCount Int     @default(0)
+  easyQuestionCount Int  @default(0)
+  mediumQuestionCount Int @default(0)
+  hardQuestionCount Int  @default(0)
   reactions    Json? // { like: number, ... }
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -127,6 +155,9 @@ model Course {
   thumbnailUrl String?
   category     String?
   source       String?
+  published    Boolean    @default(true)
+  approvedBy   String?
+  requestedBy  String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -150,6 +181,7 @@ model Enrollment {
   updatedAt      DateTime  @updatedAt
 
   @@index([userId])
+  @@unique([userId, courseId])
   @@map("enrollments")
 }
 
@@ -174,6 +206,19 @@ model Notification {
   @@index([userId, readByUser])
   @@index([userId, archived])
   @@map("notifications")
+}
+
+model AnnouncementRead {
+  id             String   @id @default(uuid())
+  announcementId String?
+  userId         String?
+  readAt         DateTime?
+  meta           Json?
+  createdAt      DateTime @default(now())
+
+  @@index([announcementId])
+  @@index([userId])
+  @@map("announcement_reads")
 }
 
 model ActivityLog {
@@ -208,6 +253,68 @@ model PaymentClaim {
   @@map("payment_claims")
 }
 
+model Payment {
+  id        String   @id @default(uuid())
+  userId    String?
+  reference String?  @unique
+  status    String?
+  plan      String?
+  amount    Int?
+  currency  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("payments")
+}
+
+model PaymentOrphan {
+  id        String   @id @default(uuid())
+  reference String?
+  reason    String?
+  data      Json
+  createdAt DateTime @default(now())
+
+  @@index([reference])
+  @@map("payment_orphans")
+}
+
+model Subscription {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  status    String?
+  plan      String?
+  provider  String?
+  reference String?
+  startsAt  DateTime?
+  endsAt    DateTime?
+  meta      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+model Agent {
+  id        String   @id @default(uuid())
+  userId    String?
+  name      String?
+  email     String?
+  status    String?
+  domain    String?
+  meta      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("agents")
+}
+
 model TimetableEvent {
   id              String    @id @default(uuid())
   userId          String
@@ -223,12 +330,34 @@ model TimetableEvent {
   startTime       String?
   endTime         String?
   reminderMinutes Int?
+  reminderEnabled Boolean   @default(true)
   notes           String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
   @@index([userId])
   @@map("timetable_events")
+}
+
+model ClassEvent {
+  id            String   @id @default(uuid())
+  title         String
+  courseCode    String?
+  venue         String?
+  notes         String?
+  startsAt      DateTime
+  endsAt        DateTime?
+  faculty       String?
+  department    String?
+  level         String?
+  createdBy     String
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([department, level])
+  @@index([createdBy])
+  @@map("class_events")
 }
 
 model MaterialSave {
@@ -245,6 +374,29 @@ model MaterialSave {
   @@map("material_saves")
 }
 
+model FeedPost {
+  id          String   @id @default(uuid())
+  kind        String
+  title       String?
+  body        String?
+  courseCode  String?
+  faculty     String?
+  department  String?
+  level       String?
+  pinned      Boolean  @default(false)
+  authorId    String
+  authorName  String?
+  authorRole  String?
+  authorPhoto String?
+  comments    Json?
+  reactions   Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([kind, department, level])
+  @@map("feed_posts")
+}
+
 model Request {
   id           String   @id @default(uuid())
   requesterUid String
@@ -252,6 +404,17 @@ model Request {
   type         String?
   title        String?
   body         String?
+  requesterName String?
+  requesterEmail String?
+  requesterRole String?
+  field        String?
+  fieldLabel   String?
+  requestedValue String?
+  reason       String?
+  reviewedAt   DateTime?
+  reviewedBy   String?
+  reviewedByName String?
+  reviewNote   String?
   status       String   @default("pending") // pending | approved | rejected
   meta         Json?
   createdAt    DateTime @default(now())
@@ -262,12 +425,43 @@ model Request {
   @@map("requests")
 }
 
+model ProfileChangeRequest {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userName       String?
+  userEmail      String?
+  uniqueId       String?
+  field          String
+  fieldLabel     String?
+  currentValue   String?
+  requestedValue String
+  reason         String?
+  status         String   @default("pending")
+  reviewedAt     DateTime?
+  reviewedBy     String?
+  reviewedByName String?
+  adminNote      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("profile_change_requests")
+}
+
 model Announcement {
   id        String   @id @default(uuid())
   title     String
   body      String?
   createdBy String?
   published Boolean  @default(true)
+  audience  String   @default("all")
+  faculty   String?
+  department String?
+  level     String?
+  courseCode String?
+  pinned    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -286,6 +480,7 @@ model Setting {
 model CbtQuestion {
   id           String   @id @default(uuid())
   courseId     String?
+  documentId   String?
   courseCode   String?
   courseTitle  String?
   topic        String?
@@ -297,6 +492,7 @@ model CbtQuestion {
   correctIndex Int
   explanation  String?
   difficulty   String   @default("medium")
+  source       String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

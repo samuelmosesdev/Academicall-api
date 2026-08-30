@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 export async function listUsers(req: Request, res: Response) {
   const role = req.query.role as string | undefined;
@@ -29,6 +30,8 @@ export async function listUsers(req: Request, res: Response) {
       plan: true,
       uniqueId: true,
       department: true,
+      faculty: true,
+      level: true,
       status: true,
       createdAt: true,
     },
@@ -84,9 +87,27 @@ const updateProfileSchema = z.object({
   lastActiveDate: z.string().optional().nullable(),
   lastActiveAt: z.coerce.date().optional().nullable(),
   photoUrl: z.string().max(2000000).optional().nullable(),
+  avatarUrl: z.string().max(2000000).optional().nullable(),
+  fcmToken: z.string().optional().nullable(),
+  deviceToken: z.string().optional().nullable(),
+  settings: z.record(z.any()).optional().nullable(),
   profileComplete: z.boolean().optional(),
   uniqueId: z.string().optional(), // only allowed if currently null
+  canImportAI: z.boolean().optional(),
+  autoPublish: z.boolean().optional(),
+  courseRepMeta: z.record(z.any()).nullable().optional(),
+  customCourses: z.array(z.any()).optional(),
 });
+
+async function createUniqueId() {
+  const year = new Date().getFullYear().toString().slice(-2);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const candidate = `UAR-${year}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const existing = await prisma.user.findUnique({ where: { uniqueId: candidate } });
+    if (!existing) return candidate;
+  }
+  throw new Error("Could not generate a unique ID. Please try again.");
+}
 
 export async function updateMe(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
@@ -100,6 +121,10 @@ export async function updateMe(req: Request, res: Response) {
     if (body.uniqueId && current.uniqueId) {
       return res.status(400).json({ error: "uniqueId already set" });
     }
+
+    const generatedUniqueId = body.profileComplete && !current.uniqueId
+      ? await createUniqueId()
+      : undefined;
 
     const user = await prisma.user.update({
       where: { id: req.user.id },
@@ -119,12 +144,26 @@ export async function updateMe(req: Request, res: Response) {
         showPhone: body.showPhone,
         allowAnonymousComments: body.allowAnonymousComments,
         photoUrl: body.photoUrl,
+        avatarUrl: body.avatarUrl,
+        fcmToken: body.fcmToken,
+        deviceToken: body.deviceToken,
+        ...(body.settings !== undefined ? { settings: body.settings === null ? Prisma.JsonNull : body.settings } : {}),
         profileComplete: body.profileComplete,
         studyStreakDays: body.studyStreakDays,
         materialsOpenedCount: body.materialsOpenedCount,
         lastActiveDate: body.lastActiveDate,
         lastActiveAt: body.lastActiveAt,
-        ...(body.uniqueId && !current.uniqueId ? { uniqueId: body.uniqueId } : {}),
+        ...(body.uniqueId && !current.uniqueId
+          ? { uniqueId: body.uniqueId }
+          : generatedUniqueId
+            ? { uniqueId: generatedUniqueId }
+            : {}),
+          canImportAI: body.canImportAI,
+          autoPublish: body.autoPublish,
+          ...(body.courseRepMeta !== undefined
+            ? { courseRepMeta: body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta }
+            : {}),
+          customCourses: body.customCourses,
       },
       select: {
         id: true,
@@ -172,6 +211,17 @@ const adminUpdateSchema = z.object({
   status: z.enum(["active", "suspended", "deleted"]).optional(),
   name: z.string().optional(),
   department: z.string().optional(),
+  faculty: z.string().nullable().optional(),
+  level: z.string().nullable().optional(),
+  mustChangePassword: z.boolean().optional(),
+  assignedBy: z.string().nullable().optional(),
+  assignedAt: z.coerce.date().nullable().optional(),
+  courseRepDepartment: z.string().nullable().optional(),
+  courseRepLevel: z.string().nullable().optional(),
+  courseRepMeta: z.record(z.any()).nullable().optional(),
+  fcmToken: z.string().nullable().optional(),
+  deviceToken: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
 });
 
 export async function adminUpdateUser(req: Request, res: Response) {
@@ -180,7 +230,13 @@ export async function adminUpdateUser(req: Request, res: Response) {
 
     const user = await prisma.user.update({
       where: { id: String(req.params.id) },
-      data: body,
+      data: {
+        ...body,
+        courseRepMeta: undefined,
+        ...(body.courseRepMeta !== undefined
+          ? { courseRepMeta: body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta }
+          : {}),
+      },
       select: {
         id: true,
         email: true,
@@ -199,5 +255,50 @@ export async function adminUpdateUser(req: Request, res: Response) {
     }
     console.error(err);
     res.status(500).json({ error: "Update failed" });
+  }
+}
+
+const createAgentSchema = z.object({
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  password: z.string().min(6),
+  name: z.string().trim().min(1).optional(),
+  role: z.enum(["agent", "alphaAgent"]),
+});
+
+export async function createAgent(req: Request, res: Response) {
+  try {
+    const body = createAgentSchema.parse(req.body);
+    const existing = await prisma.user.findUnique({ where: { email: body.email } });
+    if (existing) return res.status(409).json({ error: "Email already registered" });
+    const user = await prisma.user.create({
+      data: {
+        email: body.email,
+        passwordHash: await bcrypt.hash(body.password, 12),
+        name: body.name || body.email.split("@")[0],
+        role: body.role,
+        emailVerified: true,
+        profileComplete: true,
+        mustChangePassword: true,
+        agentDomain: body.email.split("@")[1],
+        createdByAdmin: true,
+        createdByUid: req.user?.id,
+      },
+      select: { id: true, email: true, name: true, role: true, plan: true, uniqueId: true, status: true, emailVerified: true, profileComplete: true, mustChangePassword: true },
+    });
+    return res.status(201).json({ user });
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+    console.error(err);
+    return res.status(500).json({ error: "Could not create agent" });
+  }
+}
+
+export async function deleteUser(req: Request, res: Response) {
+  try {
+    await prisma.user.update({ where: { id: String(req.params.id) }, data: { status: "deleted" } });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(404).json({ error: "User not found" });
   }
 }
