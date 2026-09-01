@@ -10,11 +10,26 @@ app.use(helmet());
 app.use(
   cors({
     origin: (origin, callback) => {
-      const configured = process.env.CORS_ORIGIN?.split(",").map((item) => item.trim()).filter(Boolean);
-      const isLocalDev = process.env.NODE_ENV !== "production" &&
-        !!origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-      if (!origin || isLocalDev || !configured?.length || configured.includes(origin)) callback(null, true);
-      else callback(new Error("Origin is not allowed by CORS"));
+      // Always allow local Vite/dev servers (any port)
+      const isLocal =
+        !!origin &&
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+      const configured =
+        process.env.CORS_ORIGIN?.split(",")
+          .map((item) => item.trim())
+          .filter(Boolean) || [];
+
+      // No origin (curl / mobile / same-origin) → allow
+      // Localhost → allow
+      // Empty CORS_ORIGIN → allow all (useful while debugging)
+      // Origin is in the allow-list → allow
+      if (!origin || isLocal || configured.length === 0 || configured.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Origin is not allowed by CORS"));
     },
     credentials: true,
   })
