@@ -40,6 +40,7 @@ router.get("/users", authenticate, requireStaff, usersCtrl.listUsers);
 router.post("/users/agents", authenticate, requireAdmin, usersCtrl.createAgent);
 router.get("/users/:id", authenticate, requireStaff, usersCtrl.getUser);
 router.patch("/users/:id", authenticate, requireAdminOrAlpha, usersCtrl.adminUpdateUser);
+router.post("/users/:id/reset-password", authenticate, requireAdmin, usersCtrl.adminResetPassword);
 router.delete("/users/:id", authenticate, requireAdmin, usersCtrl.deleteUser);
 
 // Documents
