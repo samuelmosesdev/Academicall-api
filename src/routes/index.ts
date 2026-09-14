@@ -12,6 +12,7 @@ import * as activityCtrl from "../controllers/activity.controller";
 import * as featureCtrl from "../controllers/feature.controller";
 import * as quizzesCtrl from "../controllers/quizzes.controller";
 import * as paymentsCtrl from "../controllers/payments.controller";
+import departmentRoutes from "./department.routes";
 
 const router = Router();
 
@@ -48,8 +49,9 @@ router.delete("/users/:id", authenticate, requireAdmin, usersCtrl.deleteUser);
 // Documents
 router.get("/documents", authenticate, docsCtrl.listDocuments);
 router.get("/documents/:id", authenticate, docsCtrl.getDocument);
-router.post("/documents", authenticate, requireStaff, docsCtrl.createDocument);
+router.post("/documents", authenticate, docsCtrl.createDocument);
 router.patch("/documents/:id", authenticate, docsCtrl.updateDocument);
+router.post("/documents/:id/approve", authenticate, requireStaff, docsCtrl.approveDocument);
 router.delete("/documents/:id", authenticate, docsCtrl.deleteDocument);
 
 // Announcements and approval requests
@@ -118,13 +120,16 @@ router.delete("/courses/:id", authenticate, requireAdmin, coursesCtrl.deleteCour
 router.get("/notifications", authenticate, notifCtrl.listMyNotifications);
 router.get("/notifications/admin", authenticate, requireStaff, notifCtrl.listAdminNotifications);
 router.patch("/notifications/:id/read", authenticate, notifCtrl.markRead);
+router.post("/notifications/admin/mark-all-read", authenticate, requireStaff, notifCtrl.markAllAdminRead);
 router.patch("/notifications/:id/archive", authenticate, notifCtrl.archiveNotification);
-router.post("/notifications", authenticate, requireStaff, notifCtrl.createNotification);
+router.post("/notifications", authenticate, notifCtrl.createNotification);
 router.post("/notifications/device-token", authenticate, notifCtrl.registerDeviceToken);
 router.put("/notifications/device-token", authenticate, notifCtrl.registerDeviceToken);
 router.delete("/notifications/device-token", authenticate, notifCtrl.removeDeviceToken);
 router.post("/notifications/fcm-token", authenticate, notifCtrl.registerFcmToken);
 router.put("/notifications/fcm-token", authenticate, notifCtrl.registerFcmToken);
 router.delete("/notifications/fcm-token", authenticate, notifCtrl.removeFcmToken);
+
+router.use("/department", departmentRoutes);
 
 export default router;
