@@ -3,22 +3,113 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 
 const questionSchema = z.object({
-  courseId: z.string().optional().nullable(), documentId: z.string().optional().nullable(), source: z.string().optional().nullable(), courseCode: z.string().optional().nullable(),
-  courseTitle: z.string().optional().nullable(), topic: z.string().optional().nullable(),
-  faculty: z.string().optional().nullable(), department: z.string().optional().nullable(),
-  level: z.string().optional().nullable(), questionText: z.string().min(1),
-  options: z.array(z.string()).length(4), correctIndex: z.number().int().min(0).max(3),
-  explanation: z.string().optional().nullable(), difficulty: z.string().optional(),
+  courseId: z.string().optional().nullable(),
+  documentId: z.string().optional().nullable(),
+  materialId: z.string().optional().nullable(),
+  courseCode: z.string().optional().nullable(),
+  courseTitle: z.string().optional().nullable(),
+  topic: z.string().optional().nullable(),
+  faculty: z.string().optional().nullable(),
+  department: z.string().optional().nullable(),
+  level: z.string().optional().nullable(),
+  questionText: z.string().min(1),
+  options: z.array(z.string()).min(2),
+  correctIndex: z.number().int().min(0),
+  explanation: z.string().optional().nullable(),
+  difficulty: z.string().optional(),
+  source: z.string().optional().nullable(),
+  marks: z.number().int().min(0).optional(),
+  referenceCode: z.string().optional().nullable(),
+  hintEnabled: z.boolean().optional(),
+  generatedByUserId: z.string().optional().nullable(),
 });
 
-export async function listQuestions(_req: Request, res: Response) {
-  const questions = await prisma.cbtQuestion.findMany({ orderBy: { createdAt: "desc" }, take: 5000 });
-  res.json({ questions });
+export async function listQuestions(req: Request, res: Response) {
+  try {
+    const materialId = req.query.materialId ? String(req.query.materialId) : undefined;
+    const documentId = req.query.documentId ? String(req.query.documentId) : undefined;
+
+    const where: any = {};
+    if (materialId) {
+      where.OR = [{ materialId }, { documentId: materialId }];
+    } else if (documentId) {
+      where.documentId = documentId;
+    }
+
+    const questions = await prisma.cbtQuestion.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+    res.json({ questions });
+  } catch (err: any) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Failed to list questions" });
+  }
 }
+
 export async function createQuestion(req: Request, res: Response) {
-  try { const question = await prisma.cbtQuestion.create({ data: questionSchema.parse(req.body) }); res.status(201).json({ question }); }
-  catch (err) { if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors }); res.status(500).json({ error: "Create failed" }); }
+  try {
+    const payload = questionSchema.parse(req.body);
+    const question = await prisma.cbtQuestion.create({
+      data: {
+        ...payload,
+        materialId: payload.materialId || payload.documentId || null,
+        documentId: payload.documentId || payload.materialId || null,
+        correctIndex: Number(payload.correctIndex) || 0,
+        marks: payload.marks ?? 1,
+        hintEnabled: payload.hintEnabled ?? true,
+        source: payload.source || "admin",
+      },
+    });
+    res.status(201).json({ question });
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+    console.error(err);
+    res.status(500).json({ error: "Create failed" });
+  }
 }
+
+export async function createQuestionFromMaterial(req: Request, res: Response) {
+  try {
+    const { courseCode, courseTitle, faculty, department, level, topic, questionText, options, correctIndex, explanation, difficulty, materialId, documentId, source } = req.body;
+
+    if (!questionText || !Array.isArray(options) || options.length < 2) {
+      return res.status(400).json({ error: "questionText and options required" });
+    }
+
+    const mids = materialId || documentId;
+    if (!mids) {
+      return res.status(400).json({ error: "materialId required" });
+    }
+
+    const question = await prisma.cbtQuestion.create({
+      data: {
+        courseCode: courseCode || null,
+        courseTitle: courseTitle || null,
+        faculty: faculty || null,
+        department: department || null,
+        level: level || null,
+        topic: topic || null,
+        questionText,
+        options,
+        correctIndex: Number(correctIndex) || 0,
+        explanation: explanation || null,
+        difficulty: difficulty || "medium",
+        materialId: mids,
+        documentId: mids,
+        source: source || "ai_material",
+        generatedByUserId: req.user?.id || null,
+      },
+    });
+
+    return res.status(201).json({ question });
+  } catch (err: any) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Failed to create question" });
+  }
+}
+
 export async function updateQuestion(req: Request, res: Response) {
   try { const question = await prisma.cbtQuestion.update({ where: { id: String(req.params.id) }, data: questionSchema.partial().parse(req.body) }); res.json({ question }); }
   catch (err) { if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors }); res.status(500).json({ error: "Update failed" }); }

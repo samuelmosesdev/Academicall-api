@@ -45,6 +45,7 @@ const requestsCtrl = __importStar(require("../controllers/requests.controller"))
 const enrollmentsCtrl = __importStar(require("../controllers/enrollments.controller"));
 const activityCtrl = __importStar(require("../controllers/activity.controller"));
 const featureCtrl = __importStar(require("../controllers/feature.controller"));
+const quizzesCtrl = __importStar(require("../controllers/quizzes.controller"));
 const paymentsCtrl = __importStar(require("../controllers/payments.controller"));
 const router = (0, express_1.Router)();
 // Health
@@ -67,9 +68,11 @@ router.post("/auth/verification/verify", auth_1.authenticate, authCtrl.verifyEma
 router.get("/users/me", auth_1.authenticate, authCtrl.me);
 router.patch("/users/me", auth_1.authenticate, usersCtrl.updateMe);
 router.get("/users", auth_1.authenticate, auth_1.requireStaff, usersCtrl.listUsers);
+router.get("/users/course-rep-status", auth_1.authenticate, usersCtrl.courseRepStatus);
 router.post("/users/agents", auth_1.authenticate, auth_1.requireAdmin, usersCtrl.createAgent);
 router.get("/users/:id", auth_1.authenticate, auth_1.requireStaff, usersCtrl.getUser);
 router.patch("/users/:id", auth_1.authenticate, auth_1.requireAdminOrAlpha, usersCtrl.adminUpdateUser);
+router.post("/users/:id/reset-password", auth_1.authenticate, auth_1.requireAdmin, usersCtrl.adminResetPassword);
 router.delete("/users/:id", auth_1.authenticate, auth_1.requireAdmin, usersCtrl.deleteUser);
 // Documents
 router.get("/documents", auth_1.authenticate, docsCtrl.listDocuments);
@@ -101,10 +104,17 @@ router.patch("/enrollments/:id", auth_1.authenticate, enrollmentsCtrl.updateEnro
 router.delete("/enrollments/:id", auth_1.authenticate, enrollmentsCtrl.deleteEnrollment);
 router.get("/activity", auth_1.authenticate, auth_1.requireStaff, activityCtrl.listActivity);
 router.post("/activity", auth_1.authenticate, activityCtrl.createActivity);
+router.post("/activity/:id/revert", auth_1.authenticate, auth_1.requireAdminOrAlpha, activityCtrl.revertActivity);
 router.get("/questions", auth_1.authenticate, featureCtrl.listQuestions);
 router.post("/questions", auth_1.authenticate, auth_1.requireStaff, featureCtrl.createQuestion);
+router.post("/questions/from-material", auth_1.authenticate, featureCtrl.createQuestionFromMaterial);
 router.patch("/questions/:id", auth_1.authenticate, auth_1.requireStaff, featureCtrl.updateQuestion);
 router.delete("/questions/:id", auth_1.authenticate, auth_1.requireStaff, featureCtrl.deleteQuestion);
+router.get("/quizzes/mine", auth_1.authenticate, quizzesCtrl.listMine);
+router.get("/quizzes", auth_1.authenticate, quizzesCtrl.listByMaterial);
+router.post("/quizzes", auth_1.authenticate, quizzesCtrl.createQuiz);
+router.get("/quizzes/:id", auth_1.authenticate, quizzesCtrl.getQuiz);
+router.patch("/quizzes/:id", auth_1.authenticate, quizzesCtrl.updateQuiz);
 router.get("/timetable", auth_1.authenticate, featureCtrl.listEvents);
 router.post("/timetable", auth_1.authenticate, featureCtrl.createEvent);
 router.patch("/timetable/:id", auth_1.authenticate, featureCtrl.updateEvent);

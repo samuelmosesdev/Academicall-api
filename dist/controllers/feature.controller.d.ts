@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
-export declare function listQuestions(_req: Request, res: Response): Promise<void>;
+export declare function listQuestions(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function createQuestion(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
+export declare function createQuestionFromMaterial(req: Request, res: Response): Promise<Response<any, Record<string, any>>>;
 export declare function updateQuestion(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function deleteQuestion(req: Request, res: Response): Promise<void>;
 export declare function listEvents(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;

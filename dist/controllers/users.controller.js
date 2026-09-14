@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listUsers = listUsers;
+exports.courseRepStatus = courseRepStatus;
 exports.getUser = getUser;
 exports.updateMe = updateMe;
 exports.adminUpdateUser = adminUpdateUser;
@@ -43,12 +44,70 @@ async function listUsers(req, res) {
             faculty: true,
             level: true,
             status: true,
+            photoUrl: true,
+            courseRepMeta: true,
+            mustChangePassword: true,
             createdAt: true,
         },
         orderBy: { createdAt: "desc" },
         take: 100,
     });
     res.json({ users });
+}
+function normalizeLevel(value) {
+    return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s*level\s*/g, "")
+        .replace(/\s+/g, "");
+}
+/** Any authenticated user can check whether a department-level Course Rep exists. */
+async function courseRepStatus(req, res) {
+    try {
+        const department = String(req.query.department || "").trim();
+        const level = String(req.query.level || "").trim();
+        if (!department || !level) {
+            return res.status(400).json({
+                error: "department and level are required",
+                hasCourseRep: false,
+            });
+        }
+        const reps = await prisma_1.prisma.user.findMany({
+            where: { role: "courseRep", status: "active" },
+            select: {
+                id: true,
+                name: true,
+                department: true,
+                level: true,
+                courseRepMeta: true,
+            },
+            take: 200,
+        });
+        const found = reps.find((candidate) => {
+            const meta = candidate.courseRepMeta || {};
+            const candidateDepartment = String(meta.department || candidate.department || "").trim();
+            const candidateLevel = String(meta.level || candidate.level || "").trim();
+            return (candidateDepartment.toLowerCase() === department.toLowerCase() &&
+                normalizeLevel(candidateLevel) === normalizeLevel(level));
+        });
+        return res.json({
+            hasCourseRep: Boolean(found),
+            rep: found
+                ? {
+                    id: found.id,
+                    name: found.name,
+                    department: found.courseRepMeta?.department ||
+                        found.department,
+                    level: found.courseRepMeta?.level ||
+                        found.level,
+                }
+                : null,
+        });
+    }
+    catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Failed", hasCourseRep: false });
+    }
 }
 async function getUser(req, res) {
     const user = await prisma_1.prisma.user.findUnique({
@@ -61,13 +120,27 @@ async function getUser(req, res) {
             plan: true,
             uniqueId: true,
             department: true,
+            faculty: true,
+            level: true,
+            matricNumber: true,
+            phone: true,
+            bio: true,
             photoUrl: true,
+            avatarUrl: true,
             status: true,
             profileComplete: true,
+            emailVerified: true,
+            mustChangePassword: true,
+            courseRepMeta: true,
+            assignedBy: true,
+            assignedAt: true,
             coursesEnrolledCount: true,
             questionsPracticedCount: true,
             studyStreakDays: true,
+            materialsOpenedCount: true,
+            lastActiveAt: true,
             createdAt: true,
+            updatedAt: true,
         },
     });
     if (!user)
@@ -76,16 +149,16 @@ async function getUser(req, res) {
 }
 const updateProfileSchema = zod_1.z.object({
     name: zod_1.z.string().min(1).optional(),
-    department: zod_1.z.string().optional(),
-    faculty: zod_1.z.string().optional(),
-    level: zod_1.z.string().optional(),
-    matricNumber: zod_1.z.string().optional(),
-    phone: zod_1.z.string().optional(),
-    bio: zod_1.z.string().optional(),
-    interests: zod_1.z.string().optional(),
+    department: zod_1.z.string().optional().nullable(),
+    faculty: zod_1.z.string().optional().nullable(),
+    level: zod_1.z.string().optional().nullable(),
+    matricNumber: zod_1.z.string().optional().nullable(),
+    phone: zod_1.z.string().optional().nullable(),
+    bio: zod_1.z.string().optional().nullable(),
+    interests: zod_1.z.string().optional().nullable(),
     dob: zod_1.z.string().optional().nullable(),
-    gender: zod_1.z.string().optional(),
-    nickname: zod_1.z.string().optional(),
+    gender: zod_1.z.string().optional().nullable(),
+    nickname: zod_1.z.string().optional().nullable(),
     showDepartment: zod_1.z.boolean().optional(),
     showPhone: zod_1.z.boolean().optional(),
     allowAnonymousComments: zod_1.z.boolean().optional(),
@@ -213,7 +286,7 @@ const adminUpdateSchema = zod_1.z.object({
     plan: zod_1.z.enum(["free", "pro", "annual"]).optional(),
     status: zod_1.z.enum(["active", "suspended", "deleted"]).optional(),
     name: zod_1.z.string().optional(),
-    department: zod_1.z.string().optional(),
+    department: zod_1.z.string().nullable().optional(),
     faculty: zod_1.z.string().nullable().optional(),
     level: zod_1.z.string().nullable().optional(),
     mustChangePassword: zod_1.z.boolean().optional(),
@@ -227,15 +300,46 @@ const adminUpdateSchema = zod_1.z.object({
 async function adminUpdateUser(req, res) {
     try {
         const body = adminUpdateSchema.parse(req.body);
+        const data = {};
+        if (body.role !== undefined)
+            data.role = body.role;
+        if (body.plan !== undefined)
+            data.plan = body.plan;
+        if (body.status !== undefined)
+            data.status = body.status;
+        if (body.name !== undefined)
+            data.name = body.name;
+        if (body.department !== undefined)
+            data.department = body.department;
+        if (body.faculty !== undefined)
+            data.faculty = body.faculty;
+        if (body.level !== undefined)
+            data.level = body.level;
+        if (body.mustChangePassword !== undefined) {
+            data.mustChangePassword = body.mustChangePassword;
+        }
+        if (body.assignedBy !== undefined)
+            data.assignedBy = body.assignedBy;
+        if (body.assignedAt !== undefined)
+            data.assignedAt = body.assignedAt;
+        if (body.fcmToken !== undefined)
+            data.fcmToken = body.fcmToken;
+        if (body.deviceToken !== undefined)
+            data.deviceToken = body.deviceToken;
+        if (body.avatarUrl !== undefined)
+            data.avatarUrl = body.avatarUrl;
+        if (body.courseRepMeta !== undefined) {
+            data.courseRepMeta = body.courseRepMeta === null ? client_1.Prisma.JsonNull : body.courseRepMeta;
+        }
+        if (body.role === "courseRep" && body.courseRepMeta) {
+            data.courseRepMeta = body.courseRepMeta;
+        }
+        if (body.role === "user") {
+            data.courseRepMeta = client_1.Prisma.JsonNull;
+        }
         const user = await prisma_1.prisma.user.update({
             where: { id: String(req.params.id) },
-            data: {
-                ...body,
-                courseRepMeta: undefined,
-                ...(body.courseRepMeta !== undefined
-                    ? { courseRepMeta: body.courseRepMeta === null ? client_1.Prisma.JsonNull : body.courseRepMeta }
-                    : {}),
-            },
+            data,
             select: {
                 id: true,
                 email: true,
@@ -244,6 +348,12 @@ async function adminUpdateUser(req, res) {
                 plan: true,
                 status: true,
                 department: true,
+                faculty: true,
+                level: true,
+                courseRepMeta: true,
+                assignedBy: true,
+                assignedAt: true,
+                mustChangePassword: true,
             },
         });
         res.json({ user });
@@ -254,7 +364,7 @@ async function adminUpdateUser(req, res) {
         }
         console.error("adminUpdateUser failed:", err);
         const reason = err instanceof client_1.Prisma.PrismaClientValidationError
-            ? "Invalid update — one of the fields sent doesn't match the database schema."
+            ? "Invalid update — field does not match schema."
             : err instanceof client_1.Prisma.PrismaClientKnownRequestError
                 ? `Database error (${err.code})`
                 : err instanceof Error

@@ -1,7 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listActivity = listActivity;
+exports.revertActivity = revertActivity;
 exports.createActivity = createActivity;
+const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
 const prisma_1 = require("../lib/prisma");
 const activitySchema = zod_1.z.object({
@@ -10,13 +12,139 @@ const activitySchema = zod_1.z.object({
     reference: zod_1.z.string().nullable().optional(),
     meta: zod_1.z.any().optional(),
 });
+function isReversible(action) {
+    return [
+        "role.change",
+        "user.suspend",
+        "user.reactivate",
+        "user.force_password_change",
+    ].includes(action);
+}
 async function listActivity(req, res) {
-    const activity = await prisma_1.prisma.activityLog.findMany({
-        where: req.query.agentId ? { meta: { path: ["targetUid"], equals: String(req.query.agentId) } } : undefined,
-        include: { user: { select: { id: true, name: true, email: true } } },
-        orderBy: { createdAt: "desc" }, take: 200,
-    });
-    res.json({ activity });
+    try {
+        const userId = req.query.userId ? String(req.query.userId) : undefined;
+        const agentId = req.query.agentId ? String(req.query.agentId) : undefined;
+        const action = req.query.action ? String(req.query.action) : undefined;
+        const from = req.query.from ? new Date(String(req.query.from)) : undefined;
+        const to = req.query.to ? new Date(String(req.query.to)) : undefined;
+        const limit = Math.min(Number(req.query.limit) || 100, 300);
+        const where = {};
+        if (userId) {
+            where.OR = [
+                { userId },
+                { meta: { path: ["targetUid"], equals: userId } },
+            ];
+        }
+        if (agentId) {
+            where.meta = { path: ["targetUid"], equals: agentId };
+        }
+        if (action)
+            where.action = { contains: action, mode: "insensitive" };
+        if (from || to) {
+            where.createdAt = {};
+            if (from)
+                where.createdAt.gte = from;
+            if (to)
+                where.createdAt.lte = to;
+        }
+        const activities = await prisma_1.prisma.activityLog.findMany({
+            where,
+            orderBy: { createdAt: "desc" },
+            take: limit,
+        });
+        return res.json({
+            activities: activities.map((a) => ({
+                id: a.id,
+                action: a.action,
+                actorUid: a.userId,
+                actorName: a.userName,
+                targetUid: a.meta?.targetUid ?? null,
+                targetName: a.meta?.targetName ?? null,
+                meta: a.meta,
+                createdAt: a.createdAt,
+                status: a.status,
+                reference: a.reference,
+                reversed: Boolean(a.meta?.reversed),
+                reversible: isReversible(a.action) && !a.meta?.reversed,
+            })),
+            total: activities.length,
+        });
+    }
+    catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: err.message || "Failed to list activity" });
+    }
+}
+async function revertActivity(req, res) {
+    try {
+        if (!req.user || !["admin", "alphaAgent"].includes(req.user.role)) {
+            return res.status(403).json({ error: "Admin only" });
+        }
+        const id = String(req.params.id);
+        const log = await prisma_1.prisma.activityLog.findUnique({ where: { id } });
+        if (!log)
+            return res.status(404).json({ error: "Not found" });
+        const meta = log.meta || {};
+        if (meta.reversed) {
+            return res.status(400).json({ error: "Already reversed" });
+        }
+        if (!isReversible(log.action)) {
+            return res.status(400).json({ error: "This action cannot be auto-reverted" });
+        }
+        const targetUid = meta.targetUid;
+        if (!targetUid) {
+            return res.status(400).json({ error: "No target user on this log" });
+        }
+        if (log.action === "role.change") {
+            const prev = meta.from || "user";
+            await prisma_1.prisma.user.update({
+                where: { id: targetUid },
+                data: {
+                    role: prev,
+                    ...(prev === "user" ? { courseRepMeta: client_1.Prisma.JsonNull } : {}),
+                },
+            });
+        }
+        else if (log.action === "user.suspend") {
+            await prisma_1.prisma.user.update({ where: { id: targetUid }, data: { status: "active" } });
+        }
+        else if (log.action === "user.reactivate") {
+            await prisma_1.prisma.user.update({ where: { id: targetUid }, data: { status: "suspended" } });
+        }
+        else if (log.action === "user.force_password_change") {
+            await prisma_1.prisma.user.update({ where: { id: targetUid }, data: { mustChangePassword: false } });
+        }
+        await prisma_1.prisma.activityLog.update({
+            where: { id },
+            data: {
+                meta: {
+                    ...meta,
+                    reversed: true,
+                    reversedAt: new Date().toISOString(),
+                    reversedBy: req.user.id,
+                },
+            },
+        });
+        await prisma_1.prisma.activityLog.create({
+            data: {
+                userId: req.user.id,
+                userName: req.user.email,
+                action: "activity.revert",
+                status: "success",
+                reference: id,
+                meta: {
+                    targetUid,
+                    targetName: meta.targetName,
+                    originalAction: log.action,
+                },
+            },
+        });
+        return res.json({ ok: true });
+    }
+    catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: err.message || "Revert failed" });
+    }
 }
 async function createActivity(req, res) {
     if (!req.user)

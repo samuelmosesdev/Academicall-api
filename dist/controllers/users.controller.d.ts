@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 export declare function listUsers(req: Request, res: Response): Promise<void>;
+/** Any authenticated user can check whether a department-level Course Rep exists. */
+export declare function courseRepStatus(req: Request, res: Response): Promise<Response<any, Record<string, any>>>;
 export declare function getUser(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function updateMe(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function adminUpdateUser(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;

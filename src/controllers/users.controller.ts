@@ -34,6 +34,9 @@ export async function listUsers(req: Request, res: Response) {
       faculty: true,
       level: true,
       status: true,
+      photoUrl: true,
+      courseRepMeta: true,
+      mustChangePassword: true,
       createdAt: true,
     },
     orderBy: { createdAt: "desc" },
@@ -41,6 +44,70 @@ export async function listUsers(req: Request, res: Response) {
   });
 
   res.json({ users });
+}
+
+function normalizeLevel(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s*level\s*/g, "")
+    .replace(/\s+/g, "");
+}
+
+/** Any authenticated user can check whether a department-level Course Rep exists. */
+export async function courseRepStatus(req: Request, res: Response) {
+  try {
+    const department = String(req.query.department || "").trim();
+    const level = String(req.query.level || "").trim();
+
+    if (!department || !level) {
+      return res.status(400).json({
+        error: "department and level are required",
+        hasCourseRep: false,
+      });
+    }
+
+    const reps = await prisma.user.findMany({
+      where: { role: "courseRep", status: "active" },
+      select: {
+        id: true,
+        name: true,
+        department: true,
+        level: true,
+        courseRepMeta: true,
+      },
+      take: 200,
+    });
+
+    const found = reps.find((candidate) => {
+      const meta = (candidate.courseRepMeta as Record<string, unknown> | null) || {};
+      const candidateDepartment = String(meta.department || candidate.department || "").trim();
+      const candidateLevel = String(meta.level || candidate.level || "").trim();
+      return (
+        candidateDepartment.toLowerCase() === department.toLowerCase() &&
+        normalizeLevel(candidateLevel) === normalizeLevel(level)
+      );
+    });
+
+    return res.json({
+      hasCourseRep: Boolean(found),
+      rep: found
+        ? {
+            id: found.id,
+            name: found.name,
+            department:
+              (found.courseRepMeta as Record<string, unknown> | null)?.department ||
+              found.department,
+            level:
+              (found.courseRepMeta as Record<string, unknown> | null)?.level ||
+              found.level,
+          }
+        : null,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed", hasCourseRep: false });
+  }
 }
 
 export async function getUser(req: Request, res: Response) {
@@ -54,13 +121,27 @@ export async function getUser(req: Request, res: Response) {
       plan: true,
       uniqueId: true,
       department: true,
+      faculty: true,
+      level: true,
+      matricNumber: true,
+      phone: true,
+      bio: true,
       photoUrl: true,
+      avatarUrl: true,
       status: true,
       profileComplete: true,
+      emailVerified: true,
+      mustChangePassword: true,
+      courseRepMeta: true,
+      assignedBy: true,
+      assignedAt: true,
       coursesEnrolledCount: true,
       questionsPracticedCount: true,
       studyStreakDays: true,
+      materialsOpenedCount: true,
+      lastActiveAt: true,
       createdAt: true,
+      updatedAt: true,
     },
   });
 
@@ -211,7 +292,7 @@ const adminUpdateSchema = z.object({
   plan: z.enum(["free", "pro", "annual"]).optional(),
   status: z.enum(["active", "suspended", "deleted"]).optional(),
   name: z.string().optional(),
-  department: z.string().optional(),
+  department: z.string().nullable().optional(),
   faculty: z.string().nullable().optional(),
   level: z.string().nullable().optional(),
   mustChangePassword: z.boolean().optional(),
@@ -227,15 +308,38 @@ export async function adminUpdateUser(req: Request, res: Response) {
   try {
     const body = adminUpdateSchema.parse(req.body);
 
+    const data: Prisma.UserUpdateInput = {};
+
+    if (body.role !== undefined) data.role = body.role;
+    if (body.plan !== undefined) data.plan = body.plan;
+    if (body.status !== undefined) data.status = body.status;
+    if (body.name !== undefined) data.name = body.name;
+    if (body.department !== undefined) data.department = body.department;
+    if (body.faculty !== undefined) data.faculty = body.faculty;
+    if (body.level !== undefined) data.level = body.level;
+    if (body.mustChangePassword !== undefined) {
+      data.mustChangePassword = body.mustChangePassword;
+    }
+    if (body.assignedBy !== undefined) data.assignedBy = body.assignedBy;
+    if (body.assignedAt !== undefined) data.assignedAt = body.assignedAt;
+    if (body.fcmToken !== undefined) data.fcmToken = body.fcmToken;
+    if (body.deviceToken !== undefined) data.deviceToken = body.deviceToken;
+    if (body.avatarUrl !== undefined) data.avatarUrl = body.avatarUrl;
+    if (body.courseRepMeta !== undefined) {
+      data.courseRepMeta = body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta;
+    }
+
+    if (body.role === "courseRep" && body.courseRepMeta) {
+      data.courseRepMeta = body.courseRepMeta;
+    }
+
+    if (body.role === "user") {
+      data.courseRepMeta = Prisma.JsonNull;
+    }
+
     const user = await prisma.user.update({
       where: { id: String(req.params.id) },
-      data: {
-        ...body,
-        courseRepMeta: undefined,
-        ...(body.courseRepMeta !== undefined
-          ? { courseRepMeta: body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta }
-          : {}),
-      },
+      data,
       select: {
         id: true,
         email: true,
@@ -244,6 +348,12 @@ export async function adminUpdateUser(req: Request, res: Response) {
         plan: true,
         status: true,
         department: true,
+        faculty: true,
+        level: true,
+        courseRepMeta: true,
+        assignedBy: true,
+        assignedAt: true,
+        mustChangePassword: true,
       },
     });
 
@@ -255,7 +365,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
     console.error("adminUpdateUser failed:", err);
     const reason =
       err instanceof Prisma.PrismaClientValidationError
-        ? "Invalid update — one of the fields sent doesn't match the database schema."
+        ? "Invalid update — field does not match schema."
         : err instanceof Prisma.PrismaClientKnownRequestError
         ? `Database error (${err.code})`
         : err instanceof Error

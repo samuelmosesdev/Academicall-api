@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listQuestions = listQuestions;
 exports.createQuestion = createQuestion;
+exports.createQuestionFromMaterial = createQuestionFromMaterial;
 exports.updateQuestion = updateQuestion;
 exports.deleteQuestion = deleteQuestion;
 exports.listEvents = listEvents;
@@ -30,26 +31,106 @@ exports.subscriptionCount = subscriptionCount;
 const zod_1 = require("zod");
 const prisma_1 = require("../lib/prisma");
 const questionSchema = zod_1.z.object({
-    courseId: zod_1.z.string().optional().nullable(), documentId: zod_1.z.string().optional().nullable(), source: zod_1.z.string().optional().nullable(), courseCode: zod_1.z.string().optional().nullable(),
-    courseTitle: zod_1.z.string().optional().nullable(), topic: zod_1.z.string().optional().nullable(),
-    faculty: zod_1.z.string().optional().nullable(), department: zod_1.z.string().optional().nullable(),
-    level: zod_1.z.string().optional().nullable(), questionText: zod_1.z.string().min(1),
-    options: zod_1.z.array(zod_1.z.string()).length(4), correctIndex: zod_1.z.number().int().min(0).max(3),
-    explanation: zod_1.z.string().optional().nullable(), difficulty: zod_1.z.string().optional(),
+    courseId: zod_1.z.string().optional().nullable(),
+    documentId: zod_1.z.string().optional().nullable(),
+    materialId: zod_1.z.string().optional().nullable(),
+    courseCode: zod_1.z.string().optional().nullable(),
+    courseTitle: zod_1.z.string().optional().nullable(),
+    topic: zod_1.z.string().optional().nullable(),
+    faculty: zod_1.z.string().optional().nullable(),
+    department: zod_1.z.string().optional().nullable(),
+    level: zod_1.z.string().optional().nullable(),
+    questionText: zod_1.z.string().min(1),
+    options: zod_1.z.array(zod_1.z.string()).min(2),
+    correctIndex: zod_1.z.number().int().min(0),
+    explanation: zod_1.z.string().optional().nullable(),
+    difficulty: zod_1.z.string().optional(),
+    source: zod_1.z.string().optional().nullable(),
+    marks: zod_1.z.number().int().min(0).optional(),
+    referenceCode: zod_1.z.string().optional().nullable(),
+    hintEnabled: zod_1.z.boolean().optional(),
+    generatedByUserId: zod_1.z.string().optional().nullable(),
 });
-async function listQuestions(_req, res) {
-    const questions = await prisma_1.prisma.cbtQuestion.findMany({ orderBy: { createdAt: "desc" }, take: 5000 });
-    res.json({ questions });
+async function listQuestions(req, res) {
+    try {
+        const materialId = req.query.materialId ? String(req.query.materialId) : undefined;
+        const documentId = req.query.documentId ? String(req.query.documentId) : undefined;
+        const where = {};
+        if (materialId) {
+            where.OR = [{ materialId }, { documentId: materialId }];
+        }
+        else if (documentId) {
+            where.documentId = documentId;
+        }
+        const questions = await prisma_1.prisma.cbtQuestion.findMany({
+            where,
+            orderBy: { createdAt: "desc" },
+            take: 5000,
+        });
+        res.json({ questions });
+    }
+    catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: err.message || "Failed to list questions" });
+    }
 }
 async function createQuestion(req, res) {
     try {
-        const question = await prisma_1.prisma.cbtQuestion.create({ data: questionSchema.parse(req.body) });
+        const payload = questionSchema.parse(req.body);
+        const question = await prisma_1.prisma.cbtQuestion.create({
+            data: {
+                ...payload,
+                materialId: payload.materialId || payload.documentId || null,
+                documentId: payload.documentId || payload.materialId || null,
+                correctIndex: Number(payload.correctIndex) || 0,
+                marks: payload.marks ?? 1,
+                hintEnabled: payload.hintEnabled ?? true,
+                source: payload.source || "admin",
+            },
+        });
         res.status(201).json({ question });
     }
     catch (err) {
         if (err instanceof zod_1.z.ZodError)
             return res.status(400).json({ error: err.errors });
+        console.error(err);
         res.status(500).json({ error: "Create failed" });
+    }
+}
+async function createQuestionFromMaterial(req, res) {
+    try {
+        const { courseCode, courseTitle, faculty, department, level, topic, questionText, options, correctIndex, explanation, difficulty, materialId, documentId, source } = req.body;
+        if (!questionText || !Array.isArray(options) || options.length < 2) {
+            return res.status(400).json({ error: "questionText and options required" });
+        }
+        const mids = materialId || documentId;
+        if (!mids) {
+            return res.status(400).json({ error: "materialId required" });
+        }
+        const question = await prisma_1.prisma.cbtQuestion.create({
+            data: {
+                courseCode: courseCode || null,
+                courseTitle: courseTitle || null,
+                faculty: faculty || null,
+                department: department || null,
+                level: level || null,
+                topic: topic || null,
+                questionText,
+                options,
+                correctIndex: Number(correctIndex) || 0,
+                explanation: explanation || null,
+                difficulty: difficulty || "medium",
+                materialId: mids,
+                documentId: mids,
+                source: source || "ai_material",
+                generatedByUserId: req.user?.id || null,
+            },
+        });
+        return res.status(201).json({ question });
+    }
+    catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: err.message || "Failed to create question" });
     }
 }
 async function updateQuestion(req, res) {
