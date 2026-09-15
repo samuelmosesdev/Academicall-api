@@ -6,7 +6,11 @@ import routes from "./routes";
 
 const app = express();
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -20,16 +24,12 @@ app.use(
           .map((item) => item.trim())
           .filter(Boolean) || [];
 
-      // No origin (curl / mobile / same-origin) → allow
-      // Localhost → allow
-      // Empty CORS_ORIGIN → allow all (useful while debugging)
-      // Origin is in the allow-list → allow
       if (!origin || isLocal || configured.length === 0 || configured.includes(origin)) {
         callback(null, true);
         return;
       }
 
-      callback(new Error("Origin is not allowed by CORS"));
+      callback(null, false);
     },
     credentials: true,
   })
