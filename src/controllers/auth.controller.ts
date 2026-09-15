@@ -32,6 +32,7 @@ function publicUser(user: {
   status?: string;
   department?: string | null;
   faculty?: string | null;
+  program?: string | null;
   level?: string | null;
   matricNumber?: string | null;
   phone?: string | null;
@@ -50,6 +51,7 @@ function publicUser(user: {
     status: user.status,
     department: user.department,
     faculty: user.faculty,
+    program: user.program,
     level: user.level,
     matricNumber: user.matricNumber,
     phone: user.phone,

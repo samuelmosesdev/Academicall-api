@@ -32,6 +32,7 @@ export async function listUsers(req: Request, res: Response) {
       uniqueId: true,
       department: true,
       faculty: true,
+      program: true,
       level: true,
       status: true,
       photoUrl: true,
@@ -122,6 +123,7 @@ export async function getUser(req: Request, res: Response) {
       uniqueId: true,
       department: true,
       faculty: true,
+      program: true,
       level: true,
       matricNumber: true,
       phone: true,
@@ -153,6 +155,7 @@ const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
   department: z.string().optional().nullable(),
   faculty: z.string().optional().nullable(),
+  program: z.string().optional().nullable(),
   level: z.string().optional().nullable(),
   matricNumber: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
@@ -214,6 +217,7 @@ export async function updateMe(req: Request, res: Response) {
         name: body.name,
         department: body.department,
         faculty: body.faculty,
+        program: body.program,
         level: body.level,
         matricNumber: body.matricNumber,
         phone: body.phone,
@@ -257,6 +261,7 @@ export async function updateMe(req: Request, res: Response) {
         department: true,
         photoUrl: true,
         faculty: true,
+        program: true,
         level: true,
         matricNumber: true,
         phone: true,
@@ -294,6 +299,7 @@ const adminUpdateSchema = z.object({
   name: z.string().optional(),
   department: z.string().nullable().optional(),
   faculty: z.string().nullable().optional(),
+  program: z.string().nullable().optional(),
   level: z.string().nullable().optional(),
   mustChangePassword: z.boolean().optional(),
   assignedBy: z.string().nullable().optional(),
@@ -316,6 +322,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
     if (body.name !== undefined) data.name = body.name;
     if (body.department !== undefined) data.department = body.department;
     if (body.faculty !== undefined) data.faculty = body.faculty;
+    if (body.program !== undefined) data.program = body.program;
     if (body.level !== undefined) data.level = body.level;
     if (body.mustChangePassword !== undefined) {
       data.mustChangePassword = body.mustChangePassword;
@@ -349,6 +356,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
         status: true,
         department: true,
         faculty: true,
+        program: true,
         level: true,
         courseRepMeta: true,
         assignedBy: true,

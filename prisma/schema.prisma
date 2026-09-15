@@ -61,6 +61,7 @@ model User {
   profileComplete         Boolean    @default(false)
   department              String?
   faculty                 String?
+  program                 String?
   level                   String?
   matricNumber            String?
   phone                   String?

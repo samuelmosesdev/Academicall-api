@@ -17,4 +17,4 @@ process.on("unhandledRejection", (err) => {
 
 process.on("uncaughtException", (err) => {
   console.error("uncaughtException", err);
-});
+})
