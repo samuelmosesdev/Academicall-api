@@ -42,6 +42,7 @@ async function listUsers(req, res) {
             uniqueId: true,
             department: true,
             faculty: true,
+            program: true,
             level: true,
             status: true,
             photoUrl: true,
@@ -61,14 +62,16 @@ function normalizeLevel(value) {
         .replace(/\s*level\s*/g, "")
         .replace(/\s+/g, "");
 }
-/** Any authenticated user can check whether a department-level Course Rep exists. */
+/** Any authenticated user can check whether a program-level Course Rep exists. */
 async function courseRepStatus(req, res) {
     try {
+        const program = String(req.query.program || "").trim();
         const department = String(req.query.department || "").trim();
         const level = String(req.query.level || "").trim();
-        if (!department || !level) {
+        const scope = (program || department).trim();
+        if (!scope || !level) {
             return res.status(400).json({
-                error: "department and level are required",
+                error: "program or department and level are required",
                 hasCourseRep: false,
             });
         }
@@ -78,6 +81,7 @@ async function courseRepStatus(req, res) {
                 id: true,
                 name: true,
                 department: true,
+                program: true,
                 level: true,
                 courseRepMeta: true,
             },
@@ -85,9 +89,9 @@ async function courseRepStatus(req, res) {
         });
         const found = reps.find((candidate) => {
             const meta = candidate.courseRepMeta || {};
-            const candidateDepartment = String(meta.department || candidate.department || "").trim();
-            const candidateLevel = String(meta.level || candidate.level || "").trim();
-            return (candidateDepartment.toLowerCase() === department.toLowerCase() &&
+            const candidateScope = String(meta.program || candidate.program || meta.department || candidate.department || "").trim();
+            const candidateLevel = String(meta.level ?? candidate.level ?? "").trim();
+            return (candidateScope.toLowerCase() === scope.toLowerCase() &&
                 normalizeLevel(candidateLevel) === normalizeLevel(level));
         });
         return res.json({
@@ -96,10 +100,14 @@ async function courseRepStatus(req, res) {
                 ? {
                     id: found.id,
                     name: found.name,
-                    department: found.courseRepMeta?.department ||
-                        found.department,
+                    program: found.courseRepMeta?.program ||
+                        found.program ||
+                        found.courseRepMeta?.department ||
+                        found.department ||
+                        null,
                     level: found.courseRepMeta?.level ||
-                        found.level,
+                        found.level ||
+                        null,
                 }
                 : null,
         });
@@ -121,6 +129,7 @@ async function getUser(req, res) {
             uniqueId: true,
             department: true,
             faculty: true,
+            program: true,
             level: true,
             matricNumber: true,
             phone: true,
@@ -151,6 +160,7 @@ const updateProfileSchema = zod_1.z.object({
     name: zod_1.z.string().min(1).optional(),
     department: zod_1.z.string().optional().nullable(),
     faculty: zod_1.z.string().optional().nullable(),
+    program: zod_1.z.string().optional().nullable(),
     level: zod_1.z.string().optional().nullable(),
     matricNumber: zod_1.z.string().optional().nullable(),
     phone: zod_1.z.string().optional().nullable(),
@@ -209,6 +219,7 @@ async function updateMe(req, res) {
                 name: body.name,
                 department: body.department,
                 faculty: body.faculty,
+                program: body.program,
                 level: body.level,
                 matricNumber: body.matricNumber,
                 phone: body.phone,
@@ -252,6 +263,7 @@ async function updateMe(req, res) {
                 department: true,
                 photoUrl: true,
                 faculty: true,
+                program: true,
                 level: true,
                 matricNumber: true,
                 phone: true,
@@ -288,6 +300,7 @@ const adminUpdateSchema = zod_1.z.object({
     name: zod_1.z.string().optional(),
     department: zod_1.z.string().nullable().optional(),
     faculty: zod_1.z.string().nullable().optional(),
+    program: zod_1.z.string().nullable().optional(),
     level: zod_1.z.string().nullable().optional(),
     mustChangePassword: zod_1.z.boolean().optional(),
     assignedBy: zod_1.z.string().nullable().optional(),
@@ -313,6 +326,8 @@ async function adminUpdateUser(req, res) {
             data.department = body.department;
         if (body.faculty !== undefined)
             data.faculty = body.faculty;
+        if (body.program !== undefined)
+            data.program = body.program;
         if (body.level !== undefined)
             data.level = body.level;
         if (body.mustChangePassword !== undefined) {
@@ -349,6 +364,7 @@ async function adminUpdateUser(req, res) {
                 status: true,
                 department: true,
                 faculty: true,
+                program: true,
                 level: true,
                 courseRepMeta: true,
                 assignedBy: true,

@@ -17,13 +17,13 @@ async function currentUser(req: Request) {
 }
 
 function effectiveScope(user: any) {
-  return String(user?.courseRepMeta?.program ?? user?.program ?? user?.courseRepMeta?.department ?? user?.department ?? "").trim();
+  return String(user?.courseRepMeta?.program || user?.program || user?.courseRepMeta?.department || user?.department || "").trim();
 }
 
 export async function requestJoin(req: Request, res: Response) {
   const user = await currentUser(req);
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
-  const scope = String(req.body?.program ?? req.body?.department ?? user.program ?? user.department ?? "").trim();
+  const scope = String(req.body?.program || req.body?.department || user.program || user.department || "").trim();
   if (!scope) return res.status(400).json({ error: "Program is required" });
 
   const membership = await prisma.departmentMembership.upsert({
@@ -37,7 +37,7 @@ export async function requestJoin(req: Request, res: Response) {
 export async function myMembership(req: Request, res: Response) {
   const user = await currentUser(req);
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
-  const scope = String(req.query.program ?? req.query.department ?? user.program ?? user.department ?? "").trim();
+  const scope = String(req.query.program || req.query.department || user.program || user.department || "").trim();
   if (!scope) return res.json({ membership: null });
   const membership = await prisma.departmentMembership.findUnique({ where: { userId_department: { userId: user.id, department: scope } } });
   res.json({ membership });

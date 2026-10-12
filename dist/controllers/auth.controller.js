@@ -39,6 +39,7 @@ function publicUser(user) {
         status: user.status,
         department: user.department,
         faculty: user.faculty,
+        program: user.program,
         level: user.level,
         matricNumber: user.matricNumber,
         phone: user.phone,

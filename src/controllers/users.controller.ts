@@ -55,15 +55,17 @@ function normalizeLevel(value: unknown) {
     .replace(/\s+/g, "");
 }
 
-/** Any authenticated user can check whether a department-level Course Rep exists. */
+/** Any authenticated user can check whether a program-level Course Rep exists. */
 export async function courseRepStatus(req: Request, res: Response) {
   try {
+    const program = String(req.query.program || "").trim();
     const department = String(req.query.department || "").trim();
     const level = String(req.query.level || "").trim();
+    const scope = (program || department).trim();
 
-    if (!department || !level) {
+    if (!scope || !level) {
       return res.status(400).json({
-        error: "department and level are required",
+        error: "program or department and level are required",
         hasCourseRep: false,
       });
     }
@@ -74,6 +76,7 @@ export async function courseRepStatus(req: Request, res: Response) {
         id: true,
         name: true,
         department: true,
+        program: true,
         level: true,
         courseRepMeta: true,
       },
@@ -82,10 +85,10 @@ export async function courseRepStatus(req: Request, res: Response) {
 
     const found = reps.find((candidate) => {
       const meta = (candidate.courseRepMeta as Record<string, unknown> | null) || {};
-      const candidateDepartment = String(meta.department || candidate.department || "").trim();
-      const candidateLevel = String(meta.level || candidate.level || "").trim();
+      const candidateScope = String(meta.program || candidate.program || meta.department || candidate.department || "").trim();
+      const candidateLevel = String(meta.level ?? candidate.level ?? "").trim();
       return (
-        candidateDepartment.toLowerCase() === department.toLowerCase() &&
+        candidateScope.toLowerCase() === scope.toLowerCase() &&
         normalizeLevel(candidateLevel) === normalizeLevel(level)
       );
     });
@@ -96,12 +99,16 @@ export async function courseRepStatus(req: Request, res: Response) {
         ? {
             id: found.id,
             name: found.name,
-            department:
+            program:
+              (found.courseRepMeta as Record<string, unknown> | null)?.program ||
+              found.program ||
               (found.courseRepMeta as Record<string, unknown> | null)?.department ||
-              found.department,
+              found.department ||
+              null,
             level:
               (found.courseRepMeta as Record<string, unknown> | null)?.level ||
-              found.level,
+              found.level ||
+              null,
           }
         : null,
     });

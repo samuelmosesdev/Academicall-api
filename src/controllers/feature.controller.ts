@@ -125,11 +125,11 @@ export async function deleteEvent(req: Request, res: Response) { if (!req.user) 
 const classEventSchema = z.object({ title: z.string().min(1), courseCode: z.string().optional().nullable(), venue: z.string().optional().nullable(), notes: z.string().optional().nullable(), startsAt: z.coerce.date(), endsAt: z.coerce.date().optional().nullable(), faculty: z.string().optional().nullable(), department: z.string().min(1), level: z.string().optional().nullable() });
 export async function listClassEvents(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
-  const user = await prisma.user.findUnique({ where: { id: req.user.id }, select: { department: true, faculty: true, level: true, courseRepMeta: true } });
-  const meta = user?.courseRepMeta as { department?: string; level?: string; faculty?: string } | null;
-  const department = user?.department || meta?.department;
-  const level = user?.level || meta?.level;
-  const events = await prisma.classEvent.findMany({ where: { ...(department ? { department } : {}), ...(level ? { OR: [{ level }, { level: null }] } : {}) }, orderBy: { startsAt: "asc" }, take: 200 });
+  const user = await prisma.user.findUnique({ where: { id: req.user.id }, select: { department: true, program: true, faculty: true, level: true, courseRepMeta: true } });
+  const meta = user?.courseRepMeta as { department?: string; program?: string; level?: string; faculty?: string } | null;
+  const scope = String(meta?.program || user?.program || meta?.department || user?.department || "").trim() || undefined;
+  const level = String(meta?.level ?? user?.level ?? "").trim() || undefined;
+  const events = await prisma.classEvent.findMany({ where: { ...(scope ? { department: scope } : {}), ...(level ? { OR: [{ level }, { level: null }] } : {}) }, orderBy: { startsAt: "asc" }, take: 200 });
   res.json({ events });
 }
 export async function createClassEvent(req: Request, res: Response) {

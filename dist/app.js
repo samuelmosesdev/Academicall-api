@@ -9,7 +9,9 @@ const helmet_1 = __importDefault(require("helmet"));
 const morgan_1 = __importDefault(require("morgan"));
 const routes_1 = __importDefault(require("./routes"));
 const app = (0, express_1.default)();
-app.use((0, helmet_1.default)());
+app.use((0, helmet_1.default)({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+}));
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {
         // Always allow local Vite/dev servers (any port)
@@ -18,15 +20,11 @@ app.use((0, cors_1.default)({
         const configured = process.env.CORS_ORIGIN?.split(",")
             .map((item) => item.trim())
             .filter(Boolean) || [];
-        // No origin (curl / mobile / same-origin) → allow
-        // Localhost → allow
-        // Empty CORS_ORIGIN → allow all (useful while debugging)
-        // Origin is in the allow-list → allow
         if (!origin || isLocal || configured.length === 0 || configured.includes(origin)) {
             callback(null, true);
             return;
         }
-        callback(new Error("Origin is not allowed by CORS"));
+        callback(null, false);
     },
     credentials: true,
 }));

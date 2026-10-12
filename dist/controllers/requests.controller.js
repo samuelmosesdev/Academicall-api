@@ -94,12 +94,76 @@ async function updateProfileChangeRequest(req, res) {
         if (!["admin", "alphaAgent", "agent"].includes(req.user.role) && current.userId !== req.user.id)
             return res.status(403).json({ error: "Forbidden" });
         if (body.status === "approved") {
-            const allowedFields = ["name", "phone", "faculty", "department", "level", "matricNumber"];
-            if (!allowedFields.includes(current.field))
-                return res.status(400).json({ error: "Field cannot be approved" });
-            await prisma_1.prisma.user.update({ where: { id: current.userId }, data: { [current.field]: current.requestedValue } });
+            const fieldRaw = String(current.field || "").trim();
+            const fieldKey = fieldRaw.toLowerCase().replace(/\s+/g, "");
+            const fieldAliases = {
+                name: "name",
+                fullname: "name",
+                phone: "phone",
+                phonenumber: "phone",
+                faculty: "faculty",
+                program: "program",
+                programme: "program",
+                department: "department",
+                dept: "department",
+                level: "level",
+                matricnumber: "matricNumber",
+                matric: "matricNumber",
+            };
+            const normalizedField = fieldAliases[fieldKey];
+            const allowedFields = ["name", "phone", "faculty", "program", "department", "level", "matricNumber"];
+            if (!normalizedField || !allowedFields.includes(normalizedField)) {
+                return res.status(400).json({
+                    error: "Field cannot be approved",
+                    detail: `Unsupported field "${fieldRaw}". Allowed: ${allowedFields.join(", ")}`,
+                });
+            }
+            const updateData = {
+                [normalizedField]: current.requestedValue,
+            };
+            if (normalizedField === "program") {
+                const user = await prisma_1.prisma.user.findUnique({
+                    where: { id: current.userId },
+                    select: { faculty: true },
+                });
+                const setting = await prisma_1.prisma.setting.findUnique({ where: { key: "academicCatalog" } });
+                const catalog = setting?.value;
+                const faculties = catalog?.faculties || [];
+                const preferredFaculties = user?.faculty
+                    ? faculties.filter((item) => item.name === user.faculty)
+                    : faculties;
+                const searchFaculties = preferredFaculties.length ? preferredFaculties : faculties;
+                for (const faculty of searchFaculties) {
+                    const match = faculty.departments?.find((item) => (item.programs || []).some((program) => String(program).trim().toLowerCase() ===
+                        String(current.requestedValue).trim().toLowerCase()));
+                    if (match?.name) {
+                        updateData.department = match.name;
+                        break;
+                    }
+                }
+            }
+            if (normalizedField === "faculty") {
+                const user = await prisma_1.prisma.user.findUnique({
+                    where: { id: current.userId },
+                    select: { faculty: true },
+                });
+                if (user?.faculty && user.faculty !== current.requestedValue) {
+                    updateData.department = "";
+                    updateData.program = "";
+                }
+            }
+            await prisma_1.prisma.user.update({ where: { id: current.userId }, data: updateData });
         }
-        const request = await prisma_1.prisma.profileChangeRequest.update({ where: { id: current.id }, data: { status: body.status, reviewedAt: body.reviewedAt || (body.status ? new Date() : undefined), reviewedBy: body.reviewedBy, reviewedByName: body.reviewedByName, adminNote: body.adminNote } });
+        const request = await prisma_1.prisma.profileChangeRequest.update({
+            where: { id: current.id },
+            data: {
+                status: body.status,
+                reviewedAt: body.reviewedAt || (body.status ? new Date() : undefined),
+                reviewedBy: body.reviewedBy,
+                reviewedByName: body.reviewedByName,
+                adminNote: body.adminNote,
+            },
+        });
         res.json({ request: profileChangeView(request) });
     }
     catch (err) {

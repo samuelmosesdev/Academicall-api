@@ -32,6 +32,9 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const auth_1 = require("../middleware/auth");
@@ -47,6 +50,7 @@ const activityCtrl = __importStar(require("../controllers/activity.controller"))
 const featureCtrl = __importStar(require("../controllers/feature.controller"));
 const quizzesCtrl = __importStar(require("../controllers/quizzes.controller"));
 const paymentsCtrl = __importStar(require("../controllers/payments.controller"));
+const department_routes_1 = __importDefault(require("./department.routes"));
 const router = (0, express_1.Router)();
 // Health
 router.get("/health", (_req, res) => {
@@ -77,8 +81,9 @@ router.delete("/users/:id", auth_1.authenticate, auth_1.requireAdmin, usersCtrl.
 // Documents
 router.get("/documents", auth_1.authenticate, docsCtrl.listDocuments);
 router.get("/documents/:id", auth_1.authenticate, docsCtrl.getDocument);
-router.post("/documents", auth_1.authenticate, auth_1.requireStaff, docsCtrl.createDocument);
+router.post("/documents", auth_1.authenticate, docsCtrl.createDocument);
 router.patch("/documents/:id", auth_1.authenticate, docsCtrl.updateDocument);
+router.post("/documents/:id/approve", auth_1.authenticate, auth_1.requireStaff, docsCtrl.approveDocument);
 router.delete("/documents/:id", auth_1.authenticate, docsCtrl.deleteDocument);
 // Announcements and approval requests
 router.get("/announcements", auth_1.authenticate, announcementsCtrl.listAnnouncements);
@@ -144,13 +149,15 @@ router.delete("/courses/:id", auth_1.authenticate, auth_1.requireAdmin, coursesC
 router.get("/notifications", auth_1.authenticate, notifCtrl.listMyNotifications);
 router.get("/notifications/admin", auth_1.authenticate, auth_1.requireStaff, notifCtrl.listAdminNotifications);
 router.patch("/notifications/:id/read", auth_1.authenticate, notifCtrl.markRead);
+router.post("/notifications/admin/mark-all-read", auth_1.authenticate, auth_1.requireStaff, notifCtrl.markAllAdminRead);
 router.patch("/notifications/:id/archive", auth_1.authenticate, notifCtrl.archiveNotification);
-router.post("/notifications", auth_1.authenticate, auth_1.requireStaff, notifCtrl.createNotification);
+router.post("/notifications", auth_1.authenticate, notifCtrl.createNotification);
 router.post("/notifications/device-token", auth_1.authenticate, notifCtrl.registerDeviceToken);
 router.put("/notifications/device-token", auth_1.authenticate, notifCtrl.registerDeviceToken);
 router.delete("/notifications/device-token", auth_1.authenticate, notifCtrl.removeDeviceToken);
 router.post("/notifications/fcm-token", auth_1.authenticate, notifCtrl.registerFcmToken);
 router.put("/notifications/fcm-token", auth_1.authenticate, notifCtrl.registerFcmToken);
 router.delete("/notifications/fcm-token", auth_1.authenticate, notifCtrl.removeFcmToken);
+router.use("/department", department_routes_1.default);
 exports.default = router;
 //# sourceMappingURL=index.js.map
