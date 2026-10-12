@@ -59,13 +59,12 @@ function normalizeLevel(value: unknown) {
 export async function courseRepStatus(req: Request, res: Response) {
   try {
     const program = String(req.query.program || "").trim();
-    const department = String(req.query.department || "").trim();
     const level = String(req.query.level || "").trim();
-    const scope = (program || department).trim();
+    const scope = program;
 
     if (!scope || !level) {
       return res.status(400).json({
-        error: "program or department and level are required",
+        error: "program and level are required",
         hasCourseRep: false,
       });
     }
@@ -85,7 +84,7 @@ export async function courseRepStatus(req: Request, res: Response) {
 
     const found = reps.find((candidate) => {
       const meta = (candidate.courseRepMeta as Record<string, unknown> | null) || {};
-      const candidateScope = String(meta.program || candidate.program || meta.department || candidate.department || "").trim();
+      const candidateScope = String(meta.program || "").trim();
       const candidateLevel = String(meta.level ?? candidate.level ?? "").trim();
       return (
         candidateScope.toLowerCase() === scope.toLowerCase() &&
@@ -99,12 +98,7 @@ export async function courseRepStatus(req: Request, res: Response) {
         ? {
             id: found.id,
             name: found.name,
-            program:
-              (found.courseRepMeta as Record<string, unknown> | null)?.program ||
-              found.program ||
-              (found.courseRepMeta as Record<string, unknown> | null)?.department ||
-              found.department ||
-              null,
+            program: (found.courseRepMeta as Record<string, unknown> | null)?.program || null,
             level:
               (found.courseRepMeta as Record<string, unknown> | null)?.level ||
               found.level ||
@@ -160,10 +154,10 @@ export async function getUser(req: Request, res: Response) {
 
 const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
-  department: z.string().optional().nullable(),
-  faculty: z.string().optional().nullable(),
-  program: z.string().optional().nullable(),
-  level: z.string().optional().nullable(),
+  department: z.string().trim().optional().nullable(),
+  faculty: z.string().trim().optional().nullable(),
+  program: z.string().trim().optional().nullable(),
+  level: z.string().trim().optional().nullable(),
   matricNumber: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
   bio: z.string().optional().nullable(),
@@ -187,7 +181,6 @@ const updateProfileSchema = z.object({
   uniqueId: z.string().optional(), // only allowed if currently null
   canImportAI: z.boolean().optional(),
   autoPublish: z.boolean().optional(),
-  courseRepMeta: z.record(z.any()).nullable().optional(),
   customCourses: z.array(z.any()).optional(),
 });
 
@@ -208,6 +201,26 @@ export async function updateMe(req: Request, res: Response) {
     const body = updateProfileSchema.parse(req.body);
     const current = await prisma.user.findUnique({ where: { id: req.user.id } });
     if (!current) return res.status(404).json({ error: "User not found" });
+
+    if (body.profileComplete && ["user", "courseRep"].includes(current.role)) {
+      const program = String(body.program ?? current.program ?? "").trim();
+      const department = String(body.department ?? current.department ?? "").trim();
+      const faculty = String(body.faculty ?? current.faculty ?? "").trim();
+      const level = String(body.level ?? current.level ?? "").trim();
+      if (!program || !department || !faculty || !level) {
+        return res.status(400).json({
+          error: "Faculty, department, program, and level are required to complete your profile.",
+        });
+      }
+    }
+
+    const identityFields = ["department", "faculty", "program", "level"] as const;
+    const changingAcademicIdentity = identityFields.some(
+      (field) => body[field] !== undefined && body[field] !== (current[field] ?? null)
+    );
+    if (changingAcademicIdentity && current.profileComplete && String(current.program || "").trim()) {
+      return res.status(403).json({ error: "Academic details can only be changed through a profile change request" });
+    }
 
     // uniqueId can only be set once
     if (body.uniqueId && current.uniqueId) {
@@ -253,9 +266,6 @@ export async function updateMe(req: Request, res: Response) {
             : {}),
           canImportAI: body.canImportAI,
           autoPublish: body.autoPublish,
-          ...(body.courseRepMeta !== undefined
-            ? { courseRepMeta: body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta }
-            : {}),
           customCourses: body.customCourses,
       },
       select: {
@@ -320,6 +330,34 @@ const adminUpdateSchema = z.object({
 export async function adminUpdateUser(req: Request, res: Response) {
   try {
     const body = adminUpdateSchema.parse(req.body);
+    const meta = body.courseRepMeta;
+    if (body.role === "courseRep" || (meta !== undefined && meta !== null)) {
+      const program = String(meta?.program || "").trim();
+      const department = String(meta?.department || "").trim();
+      const level = String(meta?.level || "").trim();
+      if (!program || !department || !level) {
+        return res.status(400).json({
+          error: "A Course Rep assignment requires an explicit program, parent department, and level.",
+        });
+      }
+      if (
+        (body.program !== undefined && body.program !== program) ||
+        (body.department !== undefined && body.department !== department) ||
+        (body.level !== undefined && body.level !== level)
+      ) {
+        return res.status(400).json({
+          error: "Course Rep profile and assignment program, department, and level must match.",
+        });
+      }
+      if (
+        body.role === "courseRep" &&
+        (body.program !== program || body.department !== department || body.level !== level)
+      ) {
+        return res.status(400).json({
+          error: "Assigning the Course Rep role also requires matching user program, department, and level fields.",
+        });
+      }
+    }
 
     const data: Prisma.UserUpdateInput = {};
 

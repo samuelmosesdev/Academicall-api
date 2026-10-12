@@ -52,19 +52,49 @@ const createSchema = z.object({
   tags: z.array(z.string()).optional().nullable(),
   faculty: z.string().optional().nullable(),
   department: z.string().optional().nullable(),
+  program: z.string().trim().min(1).optional().nullable(),
   level: z.string().optional().nullable(),
   status: z.enum(["pending", "approved", "rejected"]).optional(),
 });
+
+function normalizeScope(value: unknown) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function levelsMatch(first: unknown, second: unknown) {
+  const normalizeLevel = (value: unknown) => normalizeScope(value).replace(/\s*level\s*/g, "");
+  return Boolean(normalizeLevel(first) && normalizeLevel(first) === normalizeLevel(second));
+}
 
 export async function createDocument(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   try {
     const body = createSchema.parse(req.body);
     const staff = isStaff(req.user.role);
+    const isCourseRep = req.user.role === "courseRep";
+    if (!staff && !isCourseRep) {
+      return res.status(403).json({ error: "Only staff and Course Reps can upload materials" });
+    }
+    if (isCourseRep) {
+      const rep = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { courseRepMeta: true },
+      });
+      const meta = rep?.courseRepMeta as { program?: string; level?: string } | null;
+      if (
+        !body.program ||
+        normalizeScope(body.program) !== normalizeScope(meta?.program) ||
+        !levelsMatch(body.level, meta?.level)
+      ) {
+        return res.status(403).json({ error: "Course Reps can only upload materials for their assigned program and level" });
+      }
+    }
+    const { program, ...documentBody } = body;
     const status = body.status || (staff || (req.user as any).autoPublish === true ? "approved" : "pending");
     const document = await prisma.document.create({
       data: {
-        ...body,
+        ...documentBody,
+        ...(program ? { department: program } : {}),
         tags: body.tags === null ? Prisma.JsonNull : body.tags,
         uploadedById: req.user.id,
         source: body.source || (req.user.role === "courseRep" ? "courseRep" : "staff"),

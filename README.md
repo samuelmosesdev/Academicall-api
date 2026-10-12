@@ -52,20 +52,25 @@ You should see:
 
 ```
 
-## Deploy to Railway
+## Deploy to Render
 
-1. Create a Railway project with a PostgreSQL service and a service from this repository.
-2. Set the API service to use the included `Dockerfile`.
-3. Add `DATABASE_URL` from the Railway PostgreSQL service, plus a long random
+1. Create a Render web service from this repository and attach a PostgreSQL database.
+2. Use the build and start commands from `render.yaml`.
+3. Add `DATABASE_URL` from the Render PostgreSQL service, plus a long random
   `JWT_SECRET`, `NODE_ENV=production`, and the deployed frontend origin as
   `CORS_ORIGIN`. For the live site, use `CORS_ORIGIN=https://academicall.site`
   (add `https://www.academicall.site` too if that hostname is enabled).
-4. Configure Brevo transactional email variables on the API service:
+4. Keep the `GOOGLE_CLIENT_ID` value in `render.yaml` synchronized with the
+  frontend's `VITE_GOOGLE_CLIENT_ID`. Google sign-in is disabled if the API
+  service does not receive this matching value.
+5. Configure Brevo transactional email variables on the API service:
   `BREVO_API_KEY`, `BREVO_SENDER_EMAIL=noreply@academicall.site`, and
   `BREVO_REPLY_TO_EMAIL=noreply@academicall.site`, plus optionally
   `BREVO_SENDER_NAME=Academicall`. The sender/domain must be verified in Brevo;
   do not use Brevo's `bounces-...` address as the sender.
-5. Deploy and verify `/api/v1/health` returns `200`.
+6. Deploy and verify `/api/v1/health` returns `200`. A `503` from
+  `POST /api/v1/auth/google` without a credential means `GOOGLE_CLIENT_ID`
+  still needs to be configured.
 
 The container runs `prisma db push` before starting the API. Review the schema
 before the first production deploy and take a database backup before future

@@ -66,12 +66,11 @@ function normalizeLevel(value) {
 async function courseRepStatus(req, res) {
     try {
         const program = String(req.query.program || "").trim();
-        const department = String(req.query.department || "").trim();
         const level = String(req.query.level || "").trim();
-        const scope = (program || department).trim();
+        const scope = program;
         if (!scope || !level) {
             return res.status(400).json({
-                error: "program or department and level are required",
+                error: "program and level are required",
                 hasCourseRep: false,
             });
         }
@@ -89,7 +88,7 @@ async function courseRepStatus(req, res) {
         });
         const found = reps.find((candidate) => {
             const meta = candidate.courseRepMeta || {};
-            const candidateScope = String(meta.program || candidate.program || meta.department || candidate.department || "").trim();
+            const candidateScope = String(meta.program || "").trim();
             const candidateLevel = String(meta.level ?? candidate.level ?? "").trim();
             return (candidateScope.toLowerCase() === scope.toLowerCase() &&
                 normalizeLevel(candidateLevel) === normalizeLevel(level));
@@ -100,11 +99,7 @@ async function courseRepStatus(req, res) {
                 ? {
                     id: found.id,
                     name: found.name,
-                    program: found.courseRepMeta?.program ||
-                        found.program ||
-                        found.courseRepMeta?.department ||
-                        found.department ||
-                        null,
+                    program: found.courseRepMeta?.program || null,
                     level: found.courseRepMeta?.level ||
                         found.level ||
                         null,
@@ -158,10 +153,10 @@ async function getUser(req, res) {
 }
 const updateProfileSchema = zod_1.z.object({
     name: zod_1.z.string().min(1).optional(),
-    department: zod_1.z.string().optional().nullable(),
-    faculty: zod_1.z.string().optional().nullable(),
-    program: zod_1.z.string().optional().nullable(),
-    level: zod_1.z.string().optional().nullable(),
+    department: zod_1.z.string().trim().optional().nullable(),
+    faculty: zod_1.z.string().trim().optional().nullable(),
+    program: zod_1.z.string().trim().optional().nullable(),
+    level: zod_1.z.string().trim().optional().nullable(),
     matricNumber: zod_1.z.string().optional().nullable(),
     phone: zod_1.z.string().optional().nullable(),
     bio: zod_1.z.string().optional().nullable(),
@@ -185,7 +180,6 @@ const updateProfileSchema = zod_1.z.object({
     uniqueId: zod_1.z.string().optional(), // only allowed if currently null
     canImportAI: zod_1.z.boolean().optional(),
     autoPublish: zod_1.z.boolean().optional(),
-    courseRepMeta: zod_1.z.record(zod_1.z.any()).nullable().optional(),
     customCourses: zod_1.z.array(zod_1.z.any()).optional(),
 });
 async function createUniqueId() {
@@ -206,6 +200,22 @@ async function updateMe(req, res) {
         const current = await prisma_1.prisma.user.findUnique({ where: { id: req.user.id } });
         if (!current)
             return res.status(404).json({ error: "User not found" });
+        if (body.profileComplete && ["user", "courseRep"].includes(current.role)) {
+            const program = String(body.program ?? current.program ?? "").trim();
+            const department = String(body.department ?? current.department ?? "").trim();
+            const faculty = String(body.faculty ?? current.faculty ?? "").trim();
+            const level = String(body.level ?? current.level ?? "").trim();
+            if (!program || !department || !faculty || !level) {
+                return res.status(400).json({
+                    error: "Faculty, department, program, and level are required to complete your profile.",
+                });
+            }
+        }
+        const identityFields = ["department", "faculty", "program", "level"];
+        const changingAcademicIdentity = identityFields.some((field) => body[field] !== undefined && body[field] !== (current[field] ?? null));
+        if (changingAcademicIdentity && current.profileComplete && String(current.program || "").trim()) {
+            return res.status(403).json({ error: "Academic details can only be changed through a profile change request" });
+        }
         // uniqueId can only be set once
         if (body.uniqueId && current.uniqueId) {
             return res.status(400).json({ error: "uniqueId already set" });
@@ -248,9 +258,6 @@ async function updateMe(req, res) {
                         : {}),
                 canImportAI: body.canImportAI,
                 autoPublish: body.autoPublish,
-                ...(body.courseRepMeta !== undefined
-                    ? { courseRepMeta: body.courseRepMeta === null ? client_1.Prisma.JsonNull : body.courseRepMeta }
-                    : {}),
                 customCourses: body.customCourses,
             },
             select: {
@@ -313,6 +320,30 @@ const adminUpdateSchema = zod_1.z.object({
 async function adminUpdateUser(req, res) {
     try {
         const body = adminUpdateSchema.parse(req.body);
+        const meta = body.courseRepMeta;
+        if (body.role === "courseRep" || (meta !== undefined && meta !== null)) {
+            const program = String(meta?.program || "").trim();
+            const department = String(meta?.department || "").trim();
+            const level = String(meta?.level || "").trim();
+            if (!program || !department || !level) {
+                return res.status(400).json({
+                    error: "A Course Rep assignment requires an explicit program, parent department, and level.",
+                });
+            }
+            if ((body.program !== undefined && body.program !== program) ||
+                (body.department !== undefined && body.department !== department) ||
+                (body.level !== undefined && body.level !== level)) {
+                return res.status(400).json({
+                    error: "Course Rep profile and assignment program, department, and level must match.",
+                });
+            }
+            if (body.role === "courseRep" &&
+                (body.program !== program || body.department !== department || body.level !== level)) {
+                return res.status(400).json({
+                    error: "Assigning the Course Rep role also requires matching user program, department, and level fields.",
+                });
+            }
+        }
         const data = {};
         if (body.role !== undefined)
             data.role = body.role;

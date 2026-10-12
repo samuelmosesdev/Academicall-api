@@ -56,19 +56,45 @@ const createSchema = zod_1.z.object({
     tags: zod_1.z.array(zod_1.z.string()).optional().nullable(),
     faculty: zod_1.z.string().optional().nullable(),
     department: zod_1.z.string().optional().nullable(),
+    program: zod_1.z.string().trim().min(1).optional().nullable(),
     level: zod_1.z.string().optional().nullable(),
     status: zod_1.z.enum(["pending", "approved", "rejected"]).optional(),
 });
+function normalizeScope(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+function levelsMatch(first, second) {
+    const normalizeLevel = (value) => normalizeScope(value).replace(/\s*level\s*/g, "");
+    return Boolean(normalizeLevel(first) && normalizeLevel(first) === normalizeLevel(second));
+}
 async function createDocument(req, res) {
     if (!req.user)
         return res.status(401).json({ error: "Unauthenticated" });
     try {
         const body = createSchema.parse(req.body);
         const staff = isStaff(req.user.role);
+        const isCourseRep = req.user.role === "courseRep";
+        if (!staff && !isCourseRep) {
+            return res.status(403).json({ error: "Only staff and Course Reps can upload materials" });
+        }
+        if (isCourseRep) {
+            const rep = await prisma_1.prisma.user.findUnique({
+                where: { id: req.user.id },
+                select: { courseRepMeta: true },
+            });
+            const meta = rep?.courseRepMeta;
+            if (!body.program ||
+                normalizeScope(body.program) !== normalizeScope(meta?.program) ||
+                !levelsMatch(body.level, meta?.level)) {
+                return res.status(403).json({ error: "Course Reps can only upload materials for their assigned program and level" });
+            }
+        }
+        const { program, ...documentBody } = body;
         const status = body.status || (staff || req.user.autoPublish === true ? "approved" : "pending");
         const document = await prisma_1.prisma.document.create({
             data: {
-                ...body,
+                ...documentBody,
+                ...(program ? { department: program } : {}),
                 tags: body.tags === null ? client_1.Prisma.JsonNull : body.tags,
                 uploadedById: req.user.id,
                 source: body.source || (req.user.role === "courseRep" ? "courseRep" : "staff"),

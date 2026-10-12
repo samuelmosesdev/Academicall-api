@@ -89,7 +89,7 @@ router.delete("/documents/:id", auth_1.authenticate, docsCtrl.deleteDocument);
 router.get("/announcements", auth_1.authenticate, announcementsCtrl.listAnnouncements);
 router.get("/announcements/reads", auth_1.authenticate, announcementsCtrl.listAnnouncementReads);
 router.post("/announcements/:id/read", auth_1.authenticate, announcementsCtrl.markAnnouncementRead);
-router.post("/announcements", auth_1.authenticate, auth_1.requireStaff, announcementsCtrl.createAnnouncement);
+router.post("/announcements", auth_1.authenticate, announcementsCtrl.createAnnouncement);
 router.patch("/announcements/:id", auth_1.authenticate, auth_1.requireStaff, announcementsCtrl.updateAnnouncement);
 router.delete("/announcements/:id", auth_1.authenticate, auth_1.requireStaff, announcementsCtrl.deleteAnnouncement);
 router.get("/requests", auth_1.authenticate, requestsCtrl.listRequests);

@@ -47,7 +47,10 @@ function publicUser(user: {
     plan: user.plan,
     uniqueId: user.uniqueId,
     emailVerified: user.emailVerified,
-    profileComplete: user.profileComplete,
+    profileComplete: Boolean(
+      user.profileComplete &&
+      (user.role !== "user" && user.role !== "courseRep" || user.program?.trim())
+    ),
     status: user.status,
     department: user.department,
     faculty: user.faculty,

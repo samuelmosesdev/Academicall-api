@@ -58,7 +58,7 @@ router.delete("/documents/:id", authenticate, docsCtrl.deleteDocument);
 router.get("/announcements", authenticate, announcementsCtrl.listAnnouncements);
 router.get("/announcements/reads", authenticate, announcementsCtrl.listAnnouncementReads);
 router.post("/announcements/:id/read", authenticate, announcementsCtrl.markAnnouncementRead);
-router.post("/announcements", authenticate, requireStaff, announcementsCtrl.createAnnouncement);
+router.post("/announcements", authenticate, announcementsCtrl.createAnnouncement);
 router.patch("/announcements/:id", authenticate, requireStaff, announcementsCtrl.updateAnnouncement);
 router.delete("/announcements/:id", authenticate, requireStaff, announcementsCtrl.deleteAnnouncement);
 router.get("/requests", authenticate, requestsCtrl.listRequests);

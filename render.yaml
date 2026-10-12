@@ -12,3 +12,5 @@ services:
         value: production
       - key: DATABASE_URL
         sync: false
+      - key: GOOGLE_CLIENT_ID
+        value: 307015602920-v39vhisv32vb15sjastrftuc3s4siq95.apps.googleusercontent.com

@@ -19,7 +19,7 @@ export declare function updateSetting(req: Request, res: Response): Promise<void
 export declare function listChat(req: Request, res: Response): Promise<void>;
 export declare function createChat(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function updateChat(req: Request, res: Response): Promise<Response<any, Record<string, any>>>;
-export declare function listFeedPosts(req: Request, res: Response): Promise<void>;
+export declare function listFeedPosts(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function createFeedPost(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function updateFeedPost(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;
 export declare function listMaterialSaves(req: Request, res: Response): Promise<Response<any, Record<string, any>> | undefined>;

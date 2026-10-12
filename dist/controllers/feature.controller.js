@@ -163,23 +163,46 @@ async function updateEvent(req, res) { if (!req.user)
     return res.status(404).json({ error: "Event not found" }); res.json({ ok: true }); }
 async function deleteEvent(req, res) { if (!req.user)
     return res.status(401).json({ error: "Unauthenticated" }); await prisma_1.prisma.timetableEvent.deleteMany({ where: { id: String(req.params.id), userId: req.user.id } }); res.status(204).send(); }
-const classEventSchema = zod_1.z.object({ title: zod_1.z.string().min(1), courseCode: zod_1.z.string().optional().nullable(), venue: zod_1.z.string().optional().nullable(), notes: zod_1.z.string().optional().nullable(), startsAt: zod_1.z.coerce.date(), endsAt: zod_1.z.coerce.date().optional().nullable(), faculty: zod_1.z.string().optional().nullable(), department: zod_1.z.string().min(1), level: zod_1.z.string().optional().nullable() });
+const classEventSchema = zod_1.z.object({ title: zod_1.z.string().min(1), courseCode: zod_1.z.string().optional().nullable(), venue: zod_1.z.string().optional().nullable(), notes: zod_1.z.string().optional().nullable(), startsAt: zod_1.z.coerce.date(), endsAt: zod_1.z.coerce.date().optional().nullable(), faculty: zod_1.z.string().optional().nullable(), department: zod_1.z.string().optional().nullable(), program: zod_1.z.string().trim().min(1), level: zod_1.z.string().optional().nullable() });
+function normalizeScope(value) { return String(value || "").trim().toLowerCase().replace(/\s+/g, " "); }
+function levelsMatch(first, second) {
+    const a = normalizeScope(first).replace(/\s*level\s*/g, "");
+    const b = normalizeScope(second).replace(/\s*level\s*/g, "");
+    return Boolean(a && b && a === b);
+}
 async function listClassEvents(req, res) {
     if (!req.user)
         return res.status(401).json({ error: "Unauthenticated" });
-    const user = await prisma_1.prisma.user.findUnique({ where: { id: req.user.id }, select: { department: true, program: true, faculty: true, level: true, courseRepMeta: true } });
+    const isStaff = ["admin", "alphaAgent", "agent"].includes(req.user.role);
+    const user = isStaff ? null : await prisma_1.prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, department: true, program: true, level: true, courseRepMeta: true } });
     const meta = user?.courseRepMeta;
-    const scope = String(meta?.program || user?.program || meta?.department || user?.department || "").trim() || undefined;
-    const level = String(meta?.level ?? user?.level ?? "").trim() || undefined;
-    const events = await prisma_1.prisma.classEvent.findMany({ where: { ...(scope ? { department: scope } : {}), ...(level ? { OR: [{ level }, { level: null }] } : {}) }, orderBy: { startsAt: "asc" }, take: 200 });
+    const scope = user?.role === "courseRep" ? meta?.program : user?.program;
+    const level = user?.role === "courseRep" ? meta?.level : user?.level;
+    if (!isStaff && (!scope || (user?.role === "courseRep" && !level))) {
+        return res.json({ events: [] });
+    }
+    const events = await prisma_1.prisma.classEvent.findMany({ where: isStaff ? {} : { department: scope ? scope : { in: [] }, ...(level ? { OR: [{ level }, { level: null }] } : {}) }, orderBy: { startsAt: "asc" }, take: 200 });
     res.json({ events });
 }
 async function createClassEvent(req, res) {
     if (!req.user)
         return res.status(401).json({ error: "Unauthenticated" });
+    if (!["admin", "alphaAgent", "agent", "courseRep"].includes(req.user.role))
+        return res.status(403).json({ error: "Only Course Reps and staff can schedule class events" });
     try {
         const body = classEventSchema.parse(req.body);
-        const event = await prisma_1.prisma.classEvent.create({ data: { ...body, createdBy: req.user.id, createdByName: req.body.createdByName || req.user.email } });
+        const targetScope = body.program;
+        if (req.user.role === "courseRep") {
+            const rep = await prisma_1.prisma.user.findUnique({ where: { id: req.user.id }, select: { department: true, program: true, level: true, courseRepMeta: true } });
+            const meta = rep?.courseRepMeta;
+            const assignedScope = meta?.program || "";
+            const assignedLevel = meta?.level || "";
+            if (normalizeScope(targetScope) !== normalizeScope(assignedScope) || !levelsMatch(body.level, assignedLevel)) {
+                return res.status(403).json({ error: "You can only schedule classes for your assigned program and level" });
+            }
+        }
+        const { program: _program, ...eventData } = body;
+        const event = await prisma_1.prisma.classEvent.create({ data: { ...eventData, department: targetScope, createdBy: req.user.id, createdByName: req.body.createdByName || req.user.email } });
         res.status(201).json({ event });
     }
     catch (err) {
@@ -243,18 +266,45 @@ async function updateChat(req, res) {
         return res.status(500).json({ error: "Message update failed" });
     }
 }
-const postSchema = zod_1.z.object({ title: zod_1.z.string().optional(), body: zod_1.z.string().optional(), courseCode: zod_1.z.string().nullable().optional(), faculty: zod_1.z.string().nullable().optional(), department: zod_1.z.string().nullable().optional(), level: zod_1.z.string().nullable().optional(), pinned: zod_1.z.boolean().optional(), comments: zod_1.z.any().optional(), reactions: zod_1.z.any().optional() });
+const postSchema = zod_1.z.object({ title: zod_1.z.string().optional(), body: zod_1.z.string().optional(), courseCode: zod_1.z.string().nullable().optional(), faculty: zod_1.z.string().nullable().optional(), department: zod_1.z.string().nullable().optional(), program: zod_1.z.string().nullable().optional(), level: zod_1.z.string().nullable().optional(), pinned: zod_1.z.boolean().optional(), comments: zod_1.z.any().optional(), reactions: zod_1.z.any().optional() });
 async function listFeedPosts(req, res) {
+    if (!req.user)
+        return res.status(401).json({ error: "Unauthenticated" });
     const kind = String(req.params.kind);
-    const posts = await prisma_1.prisma.feedPost.findMany({ where: { kind, ...(req.query.department ? { department: String(req.query.department) } : {}) }, orderBy: [{ pinned: "desc" }, { createdAt: "desc" }], take: 100 });
+    const isStaff = ["admin", "alphaAgent", "agent"].includes(req.user.role);
+    const user = isStaff ? null : await prisma_1.prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, department: true, program: true, level: true, courseRepMeta: true } });
+    const meta = user?.courseRepMeta;
+    const scope = user?.role === "courseRep" ? meta?.program : user?.program;
+    const requestedScope = String(req.query.program || "").trim();
+    if (!isStaff && requestedScope && normalizeScope(scope) !== normalizeScope(requestedScope))
+        return res.status(403).json({ error: "You cannot access posts outside your academic program" });
+    const level = user?.role === "courseRep" ? meta?.level : user?.level;
+    if (!isStaff && (!scope || (user?.role === "courseRep" && !level)))
+        return res.json({ posts: [] });
+    const posts = await prisma_1.prisma.feedPost.findMany({ where: { kind, ...(isStaff ? {} : { department: scope ? scope : { in: [] }, ...(level ? { OR: [{ level }, { level: null }] } : {}) }) }, orderBy: [{ pinned: "desc" }, { createdAt: "desc" }], take: 100 });
     res.json({ posts });
 }
 async function createFeedPost(req, res) {
     if (!req.user)
         return res.status(401).json({ error: "Unauthenticated" });
+    if (!["admin", "alphaAgent", "agent", "courseRep"].includes(req.user.role))
+        return res.status(403).json({ error: "Insufficient permissions to create feed posts" });
     try {
         const body = postSchema.parse(req.body);
-        const post = await prisma_1.prisma.feedPost.create({ data: { ...body, kind: String(req.params.kind), authorId: req.user.id, authorName: req.body.authorName || req.user.email, authorRole: req.user.role } });
+        const targetScope = String(body.program || "").trim();
+        if (req.user.role === "courseRep") {
+            const rep = await prisma_1.prisma.user.findUnique({ where: { id: req.user.id }, select: { department: true, program: true, level: true, courseRepMeta: true } });
+            const meta = rep?.courseRepMeta;
+            const assignedScope = meta?.program || "";
+            const assignedLevel = meta?.level || "";
+            if (String(req.params.kind) !== "course" || !targetScope || normalizeScope(targetScope) !== normalizeScope(assignedScope) || !levelsMatch(body.level, assignedLevel)) {
+                return res.status(403).json({ error: "Course Reps can only post to their assigned program and level" });
+            }
+        }
+        if (body.department && !targetScope)
+            return res.status(400).json({ error: "Program is required for scoped feed posts" });
+        const { program: _program, ...postData } = body;
+        const post = await prisma_1.prisma.feedPost.create({ data: { ...postData, department: targetScope || null, kind: String(req.params.kind), authorId: req.user.id, authorName: req.body.authorName || req.user.email, authorRole: req.user.role } });
         res.status(201).json({ post });
     }
     catch (err) {

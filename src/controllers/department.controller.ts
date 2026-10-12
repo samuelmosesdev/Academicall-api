@@ -11,24 +11,29 @@ function isCourseRep(role?: string) {
   return role === "courseRep";
 }
 
+function normalizeLevel(value: unknown) {
+  return String(value || "").trim().toLowerCase().replace(/\s*level\s*/g, "");
+}
+
 async function currentUser(req: Request) {
   if (!req.user) return null;
   return prisma.user.findUnique({ where: { id: req.user.id }, select: { id: true, role: true, department: true, program: true, faculty: true, level: true, courseRepMeta: true } });
 }
 
 function effectiveScope(user: any) {
-  return String(user?.courseRepMeta?.program || user?.program || user?.courseRepMeta?.department || user?.department || "").trim();
+  return String(user?.role === "courseRep" ? user?.courseRepMeta?.program : user?.program || "").trim();
 }
 
 export async function requestJoin(req: Request, res: Response) {
   const user = await currentUser(req);
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
-  const scope = String(req.body?.program || req.body?.department || user.program || user.department || "").trim();
+  if (user.role !== "user") return res.status(403).json({ error: "Only students can request program membership" });
+  const scope = String(user.program || "").trim();
   if (!scope) return res.status(400).json({ error: "Program is required" });
 
   const membership = await prisma.departmentMembership.upsert({
     where: { userId_department: { userId: user.id, department: scope } },
-    create: { userId: user.id, department: scope, faculty: req.body?.faculty || user.faculty || null, level: req.body?.level || user.level || null, status: "pending" },
+    create: { userId: user.id, department: scope, faculty: user.faculty || null, level: user.level || null, status: "pending" },
     update: { status: "pending", withdrawStatus: null, withdrawReason: null, withdrawRequestedAt: null },
   });
   res.status(201).json({ membership, message: membership.status === "active" ? "Already a member" : "Request sent" });
@@ -37,7 +42,7 @@ export async function requestJoin(req: Request, res: Response) {
 export async function myMembership(req: Request, res: Response) {
   const user = await currentUser(req);
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
-  const scope = String(req.query.program || req.query.department || user.program || user.department || "").trim();
+  const scope = String(user.program || "").trim();
   if (!scope) return res.json({ membership: null });
   const membership = await prisma.departmentMembership.findUnique({ where: { userId_department: { userId: user.id, department: scope } } });
   res.json({ membership });
@@ -46,14 +51,22 @@ export async function myMembership(req: Request, res: Response) {
 export async function listMembers(req: Request, res: Response) {
   const user = await currentUser(req);
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
-  const requestedScope = String(req.query.program ?? req.query.department ?? "").trim();
+  if (!isStaff(user.role) && !isCourseRep(user.role)) return res.status(403).json({ error: "Forbidden" });
+  const requestedScope = String(req.query.program || "").trim();
   const scope = requestedScope || effectiveScope(user);
   if (!scope) return res.status(400).json({ error: "Program required" });
-  if (isCourseRep(user.role) && effectiveScope(user) !== scope) return res.status(403).json({ error: "Wrong program scope" });
+  const repMeta = user.courseRepMeta as { level?: string } | null;
+  const assignedLevel = isCourseRep(user.role) ? String(repMeta?.level || "").trim() : "";
+  if (isCourseRep(user.role) && !assignedLevel) return res.status(400).json({ error: "Course Rep level assignment required" });
+  if (isCourseRep(user.role) && effectiveScope(user).toLowerCase() !== scope.toLowerCase()) return res.status(403).json({ error: "Wrong program scope" });
 
   const status = req.query.status ? String(req.query.status) : undefined;
   const members = await prisma.departmentMembership.findMany({
-    where: { department: scope, ...(status ? { status } : {}) },
+    where: {
+      department: scope,
+      ...(isCourseRep(user.role) ? { level: assignedLevel } : {}),
+      ...(status ? { status } : {}),
+    },
     include: { user: { select: { id: true, name: true, email: true, uniqueId: true, program: true, level: true, matricNumber: true, photoUrl: true } } },
     orderBy: { requestedAt: "desc" },
   });
@@ -63,6 +76,7 @@ export async function listMembers(req: Request, res: Response) {
 async function membershipForAction(req: Request, res: Response) {
   const user = await currentUser(req);
   if (!user) return { user: null, membership: null };
+  const repMeta = user.courseRepMeta as { level?: string } | null;
   if (!isCourseRep(user.role) && !isStaff(user.role)) {
     res.status(403).json({ error: "Forbidden" });
     return { user, membership: null };
@@ -72,7 +86,12 @@ async function membershipForAction(req: Request, res: Response) {
     res.status(404).json({ error: "Not found" });
     return { user, membership: null };
   }
-  if (isCourseRep(user.role) && membership.department !== effectiveScope(user)) {
+  if (
+    isCourseRep(user.role) &&
+    (membership.department.toLowerCase() !== effectiveScope(user).toLowerCase() ||
+      !normalizeLevel(repMeta?.level) ||
+      normalizeLevel(membership.level) !== normalizeLevel(repMeta?.level))
+  ) {
     res.status(403).json({ error: "Wrong program scope" });
     return { user, membership: null };
   }

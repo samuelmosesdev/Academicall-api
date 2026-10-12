@@ -105,49 +105,66 @@ export async function updateProfileChangeRequest(req: Request, res: Response) {
         });
       }
 
-      const updateData: Record<string, string> = {
+      const user = await prisma.user.findUnique({
+        where: { id: current.userId },
+        select: { faculty: true, department: true, program: true, profileComplete: true },
+      });
+      if (!user) return res.status(404).json({ error: "Request owner not found" });
+
+      const updateData: Record<string, string | boolean> = {
         [normalizedField]: current.requestedValue,
       };
 
       if (normalizedField === "program") {
-        const user = await prisma.user.findUnique({
-          where: { id: current.userId },
-          select: { faculty: true },
-        });
         const setting = await prisma.setting.findUnique({ where: { key: "academicCatalog" } });
         const catalog = setting?.value as {
           faculties?: Array<{ name?: string; departments?: Array<{ name?: string; programs?: string[] }> }>;
         } | null;
 
         const faculties = catalog?.faculties || [];
-        const preferredFaculties = user?.faculty
-          ? faculties.filter((item) => item.name === user.faculty)
-          : faculties;
-        const searchFaculties = preferredFaculties.length ? preferredFaculties : faculties;
-
-        for (const faculty of searchFaculties) {
-          const match = faculty.departments?.find((item) =>
-            (item.programs || []).some(
-              (program) =>
-                String(program).trim().toLowerCase() ===
-                String(current.requestedValue).trim().toLowerCase()
+        const matches = faculties.flatMap((faculty) =>
+          (faculty.departments || [])
+            .filter((department) =>
+              (department.programs || []).some(
+                (program) =>
+                  String(program).trim().toLowerCase() ===
+                  String(current.requestedValue).trim().toLowerCase()
+              )
             )
-          );
-          if (match?.name) {
-            updateData.department = match.name;
-            break;
-          }
+            .map((department) => ({ faculty: faculty.name || "", department: department.name || "" }))
+        );
+        if (!matches.length) {
+          return res.status(400).json({ error: "The requested program is not in the academic catalog." });
         }
+        const match =
+          matches.find((item) => item.faculty === user.faculty && item.department === user.department) ||
+          matches.find((item) => item.faculty === user.faculty) ||
+          matches[0];
+        updateData.faculty = match.faculty;
+        updateData.department = match.department;
       }
 
       if (normalizedField === "faculty") {
-        const user = await prisma.user.findUnique({
-          where: { id: current.userId },
-          select: { faculty: true },
-        });
-        if (user?.faculty && user.faculty !== current.requestedValue) {
+        if (user.faculty !== current.requestedValue) {
           updateData.department = "";
           updateData.program = "";
+          updateData.profileComplete = false;
+        }
+      }
+
+      if (normalizedField === "department") {
+        const setting = await prisma.setting.findUnique({ where: { key: "academicCatalog" } });
+        const catalog = setting?.value as {
+          faculties?: Array<{ name?: string; departments?: Array<{ name?: string; programs?: string[] }> }>;
+        } | null;
+        const faculty = catalog?.faculties?.find((item) => item.name === user.faculty);
+        const department = faculty?.departments?.find((item) => item.name === current.requestedValue);
+        if (!department) {
+          return res.status(400).json({ error: "The requested department is not in the user's faculty catalog." });
+        }
+        if (!(department.programs || []).includes(user.program || "")) {
+          updateData.program = "";
+          updateData.profileComplete = false;
         }
       }
 
