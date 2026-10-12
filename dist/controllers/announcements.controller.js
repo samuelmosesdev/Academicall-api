@@ -83,6 +83,10 @@ async function createAnnouncement(req, res) {
                 return res.status(403).json({ error: "You can only post to your assigned program and level" });
             }
         }
+        const author = await prisma_1.prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { name: true, nickname: true },
+        });
         const announcement = await prisma_1.prisma.$transaction(async (tx) => {
             const created = await tx.announcement.create({ data: { ...body, createdBy: req.user.id } });
             if (body.audience === "department" && body.department) {
@@ -97,7 +101,7 @@ async function createAnnouncement(req, res) {
                         level: body.level || null,
                         pinned: body.pinned || false,
                         authorId: req.user.id,
-                        authorName: req.user.email || "Course Rep",
+                        authorName: author?.name || author?.nickname || "Course Rep",
                         authorRole: req.user.role,
                         comments: [],
                         reactions: [],

@@ -181,8 +181,32 @@ async function listClassEvents(req, res) {
     if (!isStaff && (!scope || (user?.role === "courseRep" && !level))) {
         return res.json({ events: [] });
     }
-    const events = await prisma_1.prisma.classEvent.findMany({ where: isStaff ? {} : { department: scope ? scope : { in: [] }, ...(level ? { OR: [{ level }, { level: null }] } : {}) }, orderBy: { startsAt: "asc" }, take: 200 });
-    res.json({ events });
+    const events = await prisma_1.prisma.classEvent.findMany({
+        where: isStaff ? {} : {
+            department: { equals: scope, mode: "insensitive" },
+            ...(level ? { OR: [{ level: { equals: level, mode: "insensitive" } }, { level: null }] } : {}),
+        },
+        orderBy: { startsAt: "asc" },
+        take: 200,
+    });
+    const authors = await prisma_1.prisma.user.findMany({
+        where: { id: { in: [...new Set(events.map((event) => event.createdBy))] } },
+        select: { id: true, name: true, nickname: true, email: true },
+    });
+    const authorsById = new Map(authors.map((author) => [author.id, author]));
+    res.json({
+        events: events.map((event) => {
+            const author = authorsById.get(event.createdBy);
+            const savedName = event.createdByName && !event.createdByName.includes("@")
+                ? event.createdByName
+                : null;
+            return {
+                ...event,
+                createdByName: author?.name || author?.nickname || savedName || "Course Rep",
+                createdByEmail: author?.email || null,
+            };
+        }),
+    });
 }
 async function createClassEvent(req, res) {
     if (!req.user)
@@ -202,7 +226,11 @@ async function createClassEvent(req, res) {
             }
         }
         const { program: _program, ...eventData } = body;
-        const event = await prisma_1.prisma.classEvent.create({ data: { ...eventData, department: targetScope, createdBy: req.user.id, createdByName: req.body.createdByName || req.user.email } });
+        const author = await prisma_1.prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { name: true, nickname: true },
+        });
+        const event = await prisma_1.prisma.classEvent.create({ data: { ...eventData, department: targetScope, createdBy: req.user.id, createdByName: author?.name || author?.nickname || "Course Rep" } });
         res.status(201).json({ event });
     }
     catch (err) {
@@ -281,8 +309,25 @@ async function listFeedPosts(req, res) {
     const level = user?.role === "courseRep" ? meta?.level : user?.level;
     if (!isStaff && (!scope || (user?.role === "courseRep" && !level)))
         return res.json({ posts: [] });
-    const posts = await prisma_1.prisma.feedPost.findMany({ where: { kind, ...(isStaff ? {} : { department: scope ? scope : { in: [] }, ...(level ? { OR: [{ level }, { level: null }] } : {}) }) }, orderBy: [{ pinned: "desc" }, { createdAt: "desc" }], take: 100 });
-    res.json({ posts });
+    const posts = await prisma_1.prisma.feedPost.findMany({ where: { kind, ...(isStaff ? {} : { department: scope, level }) }, orderBy: [{ pinned: "desc" }, { createdAt: "desc" }], take: 100 });
+    const authors = await prisma_1.prisma.user.findMany({
+        where: { id: { in: [...new Set(posts.map((post) => post.authorId))] } },
+        select: { id: true, name: true, nickname: true, email: true },
+    });
+    const authorsById = new Map(authors.map((author) => [author.id, author]));
+    res.json({
+        posts: posts.map((post) => {
+            const author = authorsById.get(post.authorId);
+            const savedName = post.authorName && !post.authorName.includes("@")
+                ? post.authorName
+                : null;
+            return {
+                ...post,
+                authorName: author?.name || author?.nickname || savedName || "Course Rep",
+                authorEmail: author?.email || null,
+            };
+        }),
+    });
 }
 async function createFeedPost(req, res) {
     if (!req.user)
@@ -304,7 +349,11 @@ async function createFeedPost(req, res) {
         if (body.department && !targetScope)
             return res.status(400).json({ error: "Program is required for scoped feed posts" });
         const { program: _program, ...postData } = body;
-        const post = await prisma_1.prisma.feedPost.create({ data: { ...postData, department: targetScope || null, kind: String(req.params.kind), authorId: req.user.id, authorName: req.body.authorName || req.user.email, authorRole: req.user.role } });
+        const author = await prisma_1.prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { name: true, nickname: true },
+        });
+        const post = await prisma_1.prisma.feedPost.create({ data: { ...postData, department: targetScope || null, kind: String(req.params.kind), authorId: req.user.id, authorName: author?.name || author?.nickname || "User", authorRole: req.user.role } });
         res.status(201).json({ post });
     }
     catch (err) {
