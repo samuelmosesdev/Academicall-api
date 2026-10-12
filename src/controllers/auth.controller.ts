@@ -34,6 +34,7 @@ function publicUser(user: {
   faculty?: string | null;
   program?: string | null;
   level?: string | null;
+  courseRepMeta?: Prisma.JsonValue | null;
   matricNumber?: string | null;
   phone?: string | null;
   photoUrl?: string | null;
@@ -56,6 +57,7 @@ function publicUser(user: {
     faculty: user.faculty,
     program: user.program,
     level: user.level,
+    courseRepMeta: user.courseRepMeta,
     matricNumber: user.matricNumber,
     phone: user.phone,
     photoUrl: user.photoUrl,
@@ -391,7 +393,9 @@ export async function me(req: Request, res: Response) {
         profileComplete: true,
         department: true,
         faculty: true,
+        program: true,
         level: true,
+        courseRepMeta: true,
         matricNumber: true,
         phone: true,
         photoUrl: true,
@@ -403,7 +407,15 @@ export async function me(req: Request, res: Response) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    return res.json({ user });
+    return res.json({
+      user: {
+        ...user,
+        profileComplete: Boolean(
+          user.profileComplete &&
+          (user.role !== "user" && user.role !== "courseRep" || user.program?.trim())
+        ),
+      },
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to fetch user" });

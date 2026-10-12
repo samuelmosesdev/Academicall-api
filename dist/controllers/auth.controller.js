@@ -42,6 +42,7 @@ function publicUser(user) {
         faculty: user.faculty,
         program: user.program,
         level: user.level,
+        courseRepMeta: user.courseRepMeta,
         matricNumber: user.matricNumber,
         phone: user.phone,
         photoUrl: user.photoUrl,
@@ -366,7 +367,9 @@ async function me(req, res) {
                 profileComplete: true,
                 department: true,
                 faculty: true,
+                program: true,
                 level: true,
+                courseRepMeta: true,
                 matricNumber: true,
                 phone: true,
                 photoUrl: true,
@@ -376,7 +379,13 @@ async function me(req, res) {
         if (!user) {
             return res.status(404).json({ error: "User not found" });
         }
-        return res.json({ user });
+        return res.json({
+            user: {
+                ...user,
+                profileComplete: Boolean(user.profileComplete &&
+                    (user.role !== "user" && user.role !== "courseRep" || user.program?.trim())),
+            },
+        });
     }
     catch (err) {
         console.error(err);
