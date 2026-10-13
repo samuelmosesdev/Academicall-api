@@ -296,15 +296,63 @@ async function sendVerificationCode(user) {
     if (existing?.emailVerificationSentAt && Date.now() - existing.emailVerificationSentAt.getTime() < RESEND_COOLDOWN_MS) {
         throw Object.assign(new Error("Please wait before requesting another code"), { status: 429 });
     }
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    await prisma_1.prisma.user.update({ where: { id: user.id }, data: { emailVerificationHash: await bcryptjs_1.default.hash(code, 10), emailVerificationExpiresAt: new Date(Date.now() + VERIFICATION_TTL_MS), emailVerificationSentAt: new Date(), emailVerificationAttempts: 0 } });
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-        method: "POST",
-        headers: { accept: "application/json", "api-key": config.apiKey, "content-type": "application/json" },
-        body: JSON.stringify({ sender: { name: "Academicall", email: config.senderEmail }, replyTo: { email: process.env.BREVO_REPLY_TO_EMAIL || config.senderEmail }, to: [{ email: user.email, name: user.name || user.email }], subject: "Your Academicall verification code", textContent: `Academicall verification code: ${code}\n\nExpires in 15 minutes.` }),
+    const code = String(node_crypto_1.default.randomInt(100000, 1000000));
+    await prisma_1.prisma.user.update({
+        where: { id: user.id },
+        data: {
+            emailVerificationHash: await bcryptjs_1.default.hash(code, 10),
+            emailVerificationExpiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
+            emailVerificationSentAt: null,
+            emailVerificationAttempts: 0,
+        },
     });
-    if (!response.ok)
-        throw Object.assign(new Error("Email provider error"), { status: 502 });
+    let response;
+    try {
+        response = await fetch("https://api.brevo.com/v3/smtp/email", {
+            method: "POST",
+            headers: { accept: "application/json", "api-key": config.apiKey, "content-type": "application/json" },
+            body: JSON.stringify({ sender: { name: "Academicall", email: config.senderEmail }, replyTo: { email: process.env.BREVO_REPLY_TO_EMAIL || config.senderEmail }, to: [{ email: user.email, name: user.name || user.email }], subject: "Your Academicall verification code", textContent: `Academicall verification code: ${code}\n\nExpires in 15 minutes.` }),
+        });
+    }
+    catch (error) {
+        console.error("Brevo verification request failed", error instanceof Error ? error.message : "Unknown network error");
+        throw Object.assign(new Error("Email provider unavailable. Please retry shortly."), { status: 502 });
+    }
+    if (!response.ok) {
+        const responseText = await response.text();
+        let diagnostic = responseText;
+        try {
+            const body = JSON.parse(responseText);
+            diagnostic = [body.code, body.message].filter((value) => typeof value === "string").join(": ") || responseText;
+        }
+        catch {
+            diagnostic = responseText;
+        }
+        diagnostic = diagnostic
+            .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
+            .replace(/\b\d{6}\b/g, "[redacted]")
+            .slice(0, 300);
+        console.error("Brevo rejected verification email", { status: response.status, diagnostic });
+        try {
+            await prisma_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    emailVerificationHash: null,
+                    emailVerificationExpiresAt: null,
+                    emailVerificationSentAt: null,
+                    emailVerificationAttempts: 0,
+                },
+            });
+        }
+        catch (cleanupError) {
+            console.error("Could not clear rejected verification code", cleanupError);
+        }
+        throw Object.assign(new Error("Email provider rejected the verification email. Please retry or contact support."), {
+            status: 502,
+            diagnostic,
+        });
+    }
+    await prisma_1.prisma.user.update({ where: { id: user.id }, data: { emailVerificationSentAt: new Date() } });
 }
 async function sendVerification(req, res) {
     if (!req.user)
@@ -320,7 +368,10 @@ async function sendVerification(req, res) {
     }
     catch (err) {
         const error = err;
-        return res.status(error.status || 500).json({ error: error.message || "Could not send verification code" });
+        return res.status(error.status || 500).json({
+            error: error.message || "Could not send verification code",
+            ...(error.diagnostic ? { diagnostic: error.diagnostic } : {}),
+        });
     }
 }
 async function verifyEmail(req, res) {
