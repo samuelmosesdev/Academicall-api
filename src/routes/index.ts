@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { authenticate, requireAdmin, requireStaff, requireAdminOrAlpha } from "../middleware/auth";
 import * as authCtrl from "../controllers/auth.controller";
 import * as usersCtrl from "../controllers/users.controller";
@@ -10,16 +10,35 @@ import * as requestsCtrl from "../controllers/requests.controller";
 import * as enrollmentsCtrl from "../controllers/enrollments.controller";
 import * as activityCtrl from "../controllers/activity.controller";
 import * as featureCtrl from "../controllers/feature.controller";
+import { classSocial, feedSocial, updateClassEvent } from "../controllers/programme.controller";
 import * as quizzesCtrl from "../controllers/quizzes.controller";
 import * as paymentsCtrl from "../controllers/payments.controller";
+import * as groupsCtrl from "../controllers/groups.controller";
+import * as institutionsCtrl from "../controllers/institutions.controller";
+import * as realtimeCtrl from "../controllers/realtime.controller";
 import departmentRoutes from "./department.routes";
 
 const router = Router();
+const asyncRoute = (handler: RequestHandler): RequestHandler => (req, res, next) => {
+  Promise.resolve(handler(req, res, next)).catch(next);
+};
 
 // Health
 router.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "academicall-api", time: new Date().toISOString() });
 });
+
+// Public academic catalogue (needed during profile completion).
+router.get("/institutions", asyncRoute(institutionsCtrl.listInstitutions));
+router.get("/institutions/:id", asyncRoute(institutionsCtrl.getInstitution));
+router.get("/institutions/:id/tree", asyncRoute(institutionsCtrl.getInstitutionTree));
+router.post("/institutions", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createInstitution));
+router.post("/institutions/:id/faculties", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createFaculty));
+router.post("/faculties/:id/departments", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createDepartment));
+router.post("/academic-departments/:id/programs", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createProgram));
+
+// Long-lived authenticated event stream. All writes remain on REST endpoints.
+router.get("/realtime/stream", authenticate, asyncRoute(realtimeCtrl.stream));
 
 // Paystack webhook (public — verified via signature, not JWT)
 router.post("/payments/webhook/paystack", paymentsCtrl.paystackWebhook);
@@ -97,11 +116,20 @@ router.patch("/timetable/:id", authenticate, featureCtrl.updateEvent);
 router.delete("/timetable/:id", authenticate, featureCtrl.deleteEvent);
 router.get("/class-events", authenticate, featureCtrl.listClassEvents);
 router.post("/class-events", authenticate, featureCtrl.createClassEvent);
+router.patch("/class-events/:id", authenticate, updateClassEvent);
 router.delete("/class-events/:id", authenticate, featureCtrl.deleteClassEvent);
+router.post("/class-events/:id/comments", authenticate, classSocial.addComment);
+router.delete("/class-events/:id/comments/:commentId", authenticate, classSocial.deleteComment);
+router.post("/class-events/:id/reactions", authenticate, classSocial.react);
+router.post("/class-events/:id/comments/:commentId/reactions", authenticate, classSocial.reactComment);
 router.get("/feed/:kind", authenticate, featureCtrl.listFeedPosts);
 router.post("/feed/:kind", authenticate, featureCtrl.createFeedPost);
 router.patch("/feed/:kind/:id", authenticate, featureCtrl.updateFeedPost);
 router.delete("/feed/:kind/:id", authenticate, requireStaff, featureCtrl.deleteFeedPost);
+router.post("/feed/:kind/:id/comments", authenticate, feedSocial.addComment);
+router.delete("/feed/:kind/:id/comments/:commentId", authenticate, feedSocial.deleteComment);
+router.post("/feed/:kind/:id/reactions", authenticate, feedSocial.react);
+router.post("/feed/:kind/:id/comments/:commentId/reactions", authenticate, feedSocial.reactComment);
 router.get("/material-saves", authenticate, featureCtrl.listMaterialSaves);
 router.post("/material-saves", authenticate, featureCtrl.createMaterialSave);
 router.delete("/material-saves/:id", authenticate, featureCtrl.deleteMaterialSave);
@@ -130,6 +158,31 @@ router.delete("/notifications/device-token", authenticate, notifCtrl.removeDevic
 router.post("/notifications/fcm-token", authenticate, notifCtrl.registerFcmToken);
 router.put("/notifications/fcm-token", authenticate, notifCtrl.registerFcmToken);
 router.delete("/notifications/fcm-token", authenticate, notifCtrl.removeFcmToken);
+
+// Study groups
+router.get("/groups", authenticate, groupsCtrl.listMyGroups);
+router.post("/groups", authenticate, groupsCtrl.createGroup);
+router.get("/groups/discover", authenticate, groupsCtrl.discoverGroups);
+router.get("/groups/code/:code", authenticate, groupsCtrl.previewByCode);
+router.post("/groups/code/:code/join", authenticate, groupsCtrl.joinByCode);
+router.get("/groups/:id", authenticate, groupsCtrl.getGroup);
+router.patch("/groups/:id", authenticate, groupsCtrl.updateGroup);
+router.delete("/groups/:id", authenticate, groupsCtrl.deleteGroup);
+router.delete("/groups/:id/request", authenticate, groupsCtrl.cancelJoinRequest);
+router.post("/groups/:id/leave", authenticate, groupsCtrl.leaveGroup);
+router.post("/groups/:id/transfer", authenticate, groupsCtrl.transferOwnership);
+router.post("/groups/:id/read", authenticate, groupsCtrl.markRead);
+router.post("/groups/:id/invite-scope", authenticate, groupsCtrl.inviteScope);
+router.get("/groups/:id/members", authenticate, groupsCtrl.listMembers);
+router.post("/groups/:id/members/:userId/review", authenticate, groupsCtrl.reviewJoin);
+router.post("/groups/:id/members/:userId/role", authenticate, groupsCtrl.setMemberRole);
+router.delete("/groups/:id/members/:userId", authenticate, groupsCtrl.removeMember);
+router.post("/groups/:id/history-request", authenticate, groupsCtrl.requestHistory);
+router.post("/groups/:id/history-requests/:userId", authenticate, groupsCtrl.reviewHistory);
+router.get("/groups/:id/messages", authenticate, groupsCtrl.listMessages);
+router.post("/groups/:id/messages", authenticate, groupsCtrl.sendMessage);
+router.delete("/groups/:id/messages/:messageId", authenticate, groupsCtrl.deleteMessage);
+router.post("/groups/:id/messages/:messageId/save", authenticate, groupsCtrl.saveMessageMaterial);
 
 router.use("/department", departmentRoutes);
 

@@ -34,6 +34,10 @@ function publicUser(user: {
   faculty?: string | null;
   program?: string | null;
   level?: string | null;
+  institutionId?: string | null;
+  facultyId?: string | null;
+  departmentId?: string | null;
+  programId?: string | null;
   courseRepMeta?: Prisma.JsonValue | null;
   matricNumber?: string | null;
   phone?: string | null;
@@ -57,6 +61,10 @@ function publicUser(user: {
     faculty: user.faculty,
     program: user.program,
     level: user.level,
+    institutionId: user.institutionId,
+    facultyId: user.facultyId,
+    departmentId: user.departmentId,
+    programId: user.programId,
     courseRepMeta: user.courseRepMeta,
     matricNumber: user.matricNumber,
     phone: user.phone,
@@ -447,6 +455,11 @@ export async function me(req: Request, res: Response) {
         faculty: true,
         program: true,
         level: true,
+        institutionId: true,
+        facultyId: true,
+        departmentId: true,
+        programId: true,
+        institution: { select: { id: true, name: true, displayName: true, abbreviation: true } },
         courseRepMeta: true,
         matricNumber: true,
         phone: true,

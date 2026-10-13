@@ -2,18 +2,70 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { publishToScope } from "../lib/realtime";
+import { DEFAULT_INSTITUTION_ID, institutionOf, programmeScopeKey } from "../lib/scope";
 
 function isStaff(role?: string) {
   return ["admin", "alphaAgent", "agent"].includes(role || "");
 }
 
+function hasGlobalInstitutionAccess(role?: string) {
+  return role === "admin" || role === "alphaAgent";
+}
+
+async function canAccessInstitution(
+  userId: string | undefined,
+  role: string | undefined,
+  institutionId: string | null,
+) {
+  if (hasGlobalInstitutionAccess(role)) return true;
+  if (!userId) return false;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { institutionId: true },
+  });
+  return Boolean(
+    user &&
+    (institutionId || DEFAULT_INSTITUTION_ID) === institutionOf(user),
+  );
+}
+
 export async function listDocuments(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const courseId = req.query.courseId as string | undefined;
   const q = req.query.q as string | undefined;
   const status = req.query.status as string | undefined;
   const staff = isStaff(req.user?.role);
+  const requestedInstitution = String(req.query.institutionId || "").trim();
+  const globalAccess = hasGlobalInstitutionAccess(req.user.role);
+  const requester = globalAccess
+    ? null
+    : await prisma.user.findUnique({ where: { id: req.user.id }, select: { institutionId: true } });
+  if (!requester && !globalAccess) return res.status(401).json({ error: "User not found" });
+  if (
+    staff &&
+    !globalAccess &&
+    requestedInstitution &&
+    requestedInstitution !== institutionOf(requester)
+  ) {
+    return res.status(403).json({ error: "Wrong institution scope" });
+  }
+  const requesterInstitution = requester ? institutionOf(requester) : DEFAULT_INSTITUTION_ID;
+  const institutionId = globalAccess ? requestedInstitution || undefined : requesterInstitution;
   const documents = await prisma.document.findMany({
     where: {
+      ...(!globalAccess
+        ? {
+            OR: [
+              { institutionId: requesterInstitution },
+              ...(requesterInstitution === DEFAULT_INSTITUTION_ID
+                ? [{ institutionId: null }]
+                : []),
+            ],
+          }
+        : globalAccess && institutionId
+          ? { institutionId }
+          : {}),
       ...(courseId ? { courseId } : {}),
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
       ...(!staff
@@ -52,6 +104,11 @@ export async function getDocument(req: Request, res: Response) {
     include: { uploadedBy: { select: { id: true, name: true, email: true } }, course: true },
   });
   if (!document) return res.status(404).json({ error: "Document not found" });
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  const canAccess = await canAccessInstitution(req.user.id, req.user.role, document.institutionId);
+  if (!canAccess) {
+    return res.status(404).json({ error: "Document not found" });
+  }
   if (
     document.source === "personal" &&
     document.uploadedById !== req.user?.id &&
@@ -80,6 +137,7 @@ const createSchema = z.object({
   program: z.string().trim().min(1).optional().nullable(),
   level: z.string().optional().nullable(),
   status: z.enum(["pending", "approved", "rejected"]).optional(),
+  institutionId: z.string().min(1).optional(),
 });
 
 function normalizeScope(value: unknown) {
@@ -89,6 +147,21 @@ function normalizeScope(value: unknown) {
 function levelsMatch(first: unknown, second: unknown) {
   const normalizeLevel = (value: unknown) => normalizeScope(value).replace(/\s*level\s*/g, "");
   return Boolean(normalizeLevel(first) && normalizeLevel(first) === normalizeLevel(second));
+}
+
+function broadcastMaterial(document: {
+  id: string;
+  department: string | null;
+  institutionId: string | null;
+  level: string | null;
+  source: string | null;
+  status: string;
+}, action: "created" | "updated" | "deleted") {
+  if (document.source !== "courseRep" || document.status !== "approved" || !document.department) return;
+  publishToScope(programmeScopeKey(document.institutionId, document.department), {
+    type: "programme.material",
+    data: { action, item: action === "deleted" ? { id: document.id } : document, level: document.level },
+  });
 }
 
 export async function createDocument(req: Request, res: Response) {
@@ -103,7 +176,7 @@ export async function createDocument(req: Request, res: Response) {
     }
     const uploader = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { plan: true, courseRepMeta: true, autoPublish: true },
+      select: { plan: true, courseRepMeta: true, autoPublish: true, institutionId: true },
     });
     if (!uploader) return res.status(401).json({ error: "User not found" });
     if (isStudent && uploader.plan === "free") {
@@ -111,6 +184,22 @@ export async function createDocument(req: Request, res: Response) {
     }
     if (!staff && !isCourseRep && !isStudent) {
       return res.status(403).json({ error: "You don't have permission to upload materials" });
+    }
+    const institutionId = staff
+      ? body.institutionId || institutionOf(uploader)
+      : institutionOf(uploader);
+    if (staff && body.institutionId) {
+      const institution = await prisma.institution.findUnique({
+        where: { id: body.institutionId },
+        select: { id: true },
+      });
+      if (!institution) return res.status(400).json({ error: "Institution not found" });
+      if (
+        !hasGlobalInstitutionAccess(req.user.role) &&
+        body.institutionId !== institutionOf(uploader)
+      ) {
+        return res.status(403).json({ error: "Wrong institution scope" });
+      }
     }
     let assignedProgram: string | null = null;
     let level: string | null = null;
@@ -147,6 +236,7 @@ export async function createDocument(req: Request, res: Response) {
     const document = await prisma.document.create({
       data: {
         ...documentBody,
+        institutionId,
         ...(isStudent
           ? { courseId: null, faculty: null, department: null, level: null, source: "personal" }
           : isCourseRep
@@ -168,6 +258,7 @@ export async function createDocument(req: Request, res: Response) {
         ...(isStudent || isCourseRep ? { approvedAt: new Date() } : {}),
       },
     });
+    broadcastMaterial(document, "created");
     res.status(201).json({ document });
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
@@ -180,8 +271,11 @@ export async function updateDocument(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const existing = await prisma.document.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Document not found" });
+  if (!(await canAccessInstitution(req.user.id, req.user.role, existing.institutionId))) {
+    return res.status(404).json({ error: "Document not found" });
+  }
   if (existing.uploadedById !== req.user.id && !isStaff(req.user.role)) return res.status(403).json({ error: "Forbidden" });
-  let data = req.body;
+  let data: Record<string, unknown>;
   if (existing.source === "personal" && !isStaff(req.user.role)) {
     const parsed = z.object({
         title: z.string().min(1).optional(),
@@ -194,8 +288,46 @@ export async function updateDocument(req: Request, res: Response) {
       }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors });
     data = parsed.data;
+  } else if (existing.source === "courseRep" && req.user.role === "courseRep") {
+    const parsed = z.object({
+      title: z.string().min(1).optional(),
+      description: z.string().nullable().optional(),
+      fileUrl: z.string().url().nullable().optional(),
+      thumbnailUrl: z.string().url().nullable().optional(),
+      fileName: z.string().nullable().optional(),
+      fileSize: z.number().int().nonnegative().nullable().optional(),
+      tags: z.array(z.string()).nullable().optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors });
+    data = parsed.data;
+  } else if (isStaff(req.user.role)) {
+    const parsed = createSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors });
+    data = parsed.data;
+    if (parsed.data.institutionId) {
+      const institution = await prisma.institution.findUnique({
+        where: { id: parsed.data.institutionId },
+        select: { id: true },
+      });
+      if (!institution) return res.status(400).json({ error: "Institution not found" });
+      if (!hasGlobalInstitutionAccess(req.user.role)) {
+        const uploader = await prisma.user.findUnique({
+          where: { id: req.user.id },
+          select: { institutionId: true },
+        });
+        if (!uploader) return res.status(401).json({ error: "User not found" });
+        if (parsed.data.institutionId !== institutionOf(uploader)) {
+          return res.status(403).json({ error: "Wrong institution scope" });
+        }
+      }
+    }
+  } else {
+    return res.status(403).json({ error: "Forbidden" });
   }
-  const document = await prisma.document.update({ where: { id: existing.id }, data });
+  if (data.tags === null) data.tags = Prisma.JsonNull;
+  const document = await prisma.document.update({ where: { id: existing.id }, data: data as Prisma.DocumentUpdateInput });
+  broadcastMaterial(existing, "deleted");
+  broadcastMaterial(document, "updated");
   res.json({ document });
 }
 
@@ -204,11 +336,16 @@ export async function approveDocument(req: Request, res: Response) {
   if (!isStaff(req.user.role)) return res.status(403).json({ error: "Forbidden" });
   const existing = await prisma.document.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Document not found" });
+  if (!(await canAccessInstitution(req.user.id, req.user.role, existing.institutionId))) {
+    return res.status(404).json({ error: "Document not found" });
+  }
   const status = req.body?.status === "rejected" ? "rejected" : "approved";
   const document = await prisma.document.update({
     where: { id: existing.id },
     data: { status, approvedById: req.user.id, approvedAt: new Date() },
   });
+  broadcastMaterial(existing, "deleted");
+  broadcastMaterial(document, "updated");
   res.json({ document });
 }
 
@@ -216,7 +353,11 @@ export async function deleteDocument(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const existing = await prisma.document.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Document not found" });
+  if (!(await canAccessInstitution(req.user.id, req.user.role, existing.institutionId))) {
+    return res.status(404).json({ error: "Document not found" });
+  }
   if (existing.uploadedById !== req.user.id && !isStaff(req.user.role)) return res.status(403).json({ error: "Forbidden" });
   await prisma.document.delete({ where: { id: existing.id } });
+  broadcastMaterial(existing, "deleted");
   res.status(204).send();
 }

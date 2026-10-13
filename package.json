@@ -12,6 +12,8 @@
     "prisma:studio": "prisma studio",
     "db:push": "prisma db push",
     "db:seed": "ts-node prisma/seed.ts",
+    "db:seed:institutions": "ts-node src/scripts/seedInstitutions.ts",
+    "test:integration": "node tests/integration.test.mjs",
     "migrate:firestore": "node scripts/migrate-firestore-to-postgres.mjs"
   },
   "keywords": [

@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { broadcastProgramme, canSeeScoped } from "./programme.controller";
+import { institutionOf, isStaffRole, loadScopedUser, programmeScope } from "../lib/scope";
 
 const questionSchema = z.object({
   courseId: z.string().optional().nullable(),
@@ -122,8 +124,9 @@ export async function createEvent(req: Request, res: Response) { if (!req.user) 
 export async function updateEvent(req: Request, res: Response) { if (!req.user) return res.status(401).json({ error: "Unauthenticated" }); const event = await prisma.timetableEvent.updateMany({ where: { id: String(req.params.id), userId: req.user.id }, data: eventSchema.partial().parse(req.body) }); if (!event.count) return res.status(404).json({ error: "Event not found" }); res.json({ ok: true }); }
 export async function deleteEvent(req: Request, res: Response) { if (!req.user) return res.status(401).json({ error: "Unauthenticated" }); await prisma.timetableEvent.deleteMany({ where: { id: String(req.params.id), userId: req.user.id } }); res.status(204).send(); }
 
-const classEventSchema = z.object({ title: z.string().min(1), courseCode: z.string().optional().nullable(), venue: z.string().optional().nullable(), notes: z.string().optional().nullable(), startsAt: z.coerce.date(), endsAt: z.coerce.date().optional().nullable(), faculty: z.string().optional().nullable(), department: z.string().optional().nullable(), program: z.string().trim().min(1), level: z.string().optional().nullable() });
+const classEventSchema = z.object({ title: z.string().min(1), courseCode: z.string().optional().nullable(), venue: z.string().optional().nullable(), notes: z.string().optional().nullable(), startsAt: z.coerce.date(), endsAt: z.coerce.date().optional().nullable(), faculty: z.string().optional().nullable(), department: z.string().optional().nullable(), program: z.string().trim().min(1), level: z.string().optional().nullable(), institutionId: z.string().min(1).nullable().optional() });
 function normalizeScope(value: unknown) { return String(value || "").trim().toLowerCase().replace(/\s+/g, " "); }
+function hasGlobalInstitutionAccess(role: string) { return role === "admin" || role === "alphaAgent"; }
 function levelsMatch(first: unknown, second: unknown) {
   const a = normalizeScope(first).replace(/\s*level\s*/g, "");
   const b = normalizeScope(second).replace(/\s*level\s*/g, "");
@@ -131,17 +134,23 @@ function levelsMatch(first: unknown, second: unknown) {
 }
 export async function listClassEvents(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
-  const isStaff = ["admin", "alphaAgent", "agent"].includes(req.user.role);
-  const user = isStaff ? null : await prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, department: true, program: true, level: true, courseRepMeta: true } });
-  const meta = user?.courseRepMeta as { department?: string; program?: string; level?: string } | null;
-  const scope = user?.role === "courseRep" ? meta?.program : user?.program;
-  const level = user?.role === "courseRep" ? meta?.level : user?.level;
-  if (!isStaff && (!scope || (user?.role === "courseRep" && !level))) {
+  const user = await loadScopedUser(req.user.id);
+  if (!user) return res.status(401).json({ error: "Unauthenticated" });
+  const staff = isStaffRole(user.role);
+  const scope = staff ? String(req.query.program || "").trim() : programmeScope(user);
+  const level = staff
+    ? String(req.query.level || "").trim()
+    : String((user.courseRepMeta as { level?: string } | null)?.level || user.level || "").trim();
+  const institutionId = staff && hasGlobalInstitutionAccess(user.role)
+    ? String(req.query.institutionId || "").trim() || undefined
+    : institutionOf(user);
+  if (!staff && (!scope || (user.role === "courseRep" && !level))) {
     return res.json({ events: [] });
   }
   const events = await prisma.classEvent.findMany({
-    where: isStaff ? {} : {
-      department: { equals: scope, mode: "insensitive" },
+    where: {
+      ...(institutionId ? { institutionId } : {}),
+      ...(scope ? { department: { equals: scope, mode: "insensitive" } } : {}),
       ...(level ? { OR: [{ level: { equals: level, mode: "insensitive" } }, { level: null }] } : {}),
     },
     orderBy: { startsAt: "asc" },
@@ -172,30 +181,42 @@ export async function createClassEvent(req: Request, res: Response) {
   try {
     const body = classEventSchema.parse(req.body);
     const targetScope = body.program;
+    const author = await loadScopedUser(req.user.id);
+    if (!author) return res.status(401).json({ error: "Unauthenticated" });
     if (req.user.role === "courseRep") {
-      const rep = await prisma.user.findUnique({ where: { id: req.user.id }, select: { department: true, program: true, level: true, courseRepMeta: true } });
-      const meta = rep?.courseRepMeta as { department?: string; program?: string; level?: string } | null;
+      const meta = author.courseRepMeta as { program?: string; level?: string } | null;
       const assignedScope = meta?.program || "";
-      const assignedLevel = meta?.level || "";
+      const assignedLevel = meta?.level || author.level || "";
       if (normalizeScope(targetScope) !== normalizeScope(assignedScope) || !levelsMatch(body.level, assignedLevel)) {
         return res.status(403).json({ error: "You can only schedule classes for your assigned program and level" });
       }
     }
-    const { program: _program, ...eventData } = body;
-    const author = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { name: true, nickname: true },
-    });
-    const event = await prisma.classEvent.create({ data: { ...eventData, department: targetScope, createdBy: req.user.id, createdByName: author?.name || author?.nickname || "Course Rep" } });
+    const { program: _program, institutionId: _requestedInstitution, ...eventData } = body;
+    if (!hasGlobalInstitutionAccess(author.role) && body.institutionId && body.institutionId !== institutionOf(author)) {
+      return res.status(403).json({ error: "You can only schedule classes for your institution" });
+    }
+    const eventInstitutionId = hasGlobalInstitutionAccess(author.role) && body.institutionId
+      ? body.institutionId
+      : institutionOf(author);
+    if (!(await prisma.institution.findUnique({ where: { id: eventInstitutionId }, select: { id: true } }))) {
+      return res.status(400).json({ error: "Select a valid institution for this class" });
+    }
+    const event = await prisma.classEvent.create({ data: { ...eventData, department: targetScope, institutionId: eventInstitutionId, createdBy: req.user.id, createdByName: author.name || "Course Rep" } });
+    broadcastProgramme("classEvent", event, "created");
     res.status(201).json({ event });
   }
   catch (err) { if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors }); res.status(500).json({ error: "Create failed" }); }
 }
 export async function deleteClassEvent(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
-  const canDeleteAny = ["admin", "alphaAgent", "agent"].includes(req.user.role);
-  const result = await prisma.classEvent.deleteMany({ where: { id: String(req.params.id), ...(canDeleteAny ? {} : { createdBy: req.user.id }) } });
+  const user = await loadScopedUser(req.user.id);
+  if (!user) return res.status(401).json({ error: "Unauthenticated" });
+  const existing = await prisma.classEvent.findUnique({ where: { id: String(req.params.id) } });
+  if (!existing) return res.status(404).json({ error: "Class event not found" });
+  if (!canSeeScoped(user, existing)) return res.status(403).json({ error: "This class belongs to another programme" });
+  const result = await prisma.classEvent.deleteMany({ where: { id: String(req.params.id), ...(isStaffRole(user.role) ? {} : { createdBy: req.user.id }) } });
   if (!result.count) return res.status(404).json({ error: "Class event not found" });
+  broadcastProgramme("classEvent", existing, "deleted");
   res.status(204).send();
 }
 
@@ -232,19 +253,42 @@ export async function updateChat(req: Request, res: Response) {
   }
 }
 
-const postSchema = z.object({ title: z.string().optional(), body: z.string().optional(), courseCode: z.string().nullable().optional(), faculty: z.string().nullable().optional(), department: z.string().nullable().optional(), program: z.string().nullable().optional(), level: z.string().nullable().optional(), pinned: z.boolean().optional(), comments: z.any().optional(), reactions: z.any().optional() });
+const postSchema = z.object({ title: z.string().optional(), body: z.string().optional(), courseCode: z.string().nullable().optional(), faculty: z.string().nullable().optional(), department: z.string().nullable().optional(), program: z.string().nullable().optional(), level: z.string().nullable().optional(), institutionId: z.string().min(1).nullable().optional(), pinned: z.boolean().optional() });
+const postPatchSchema = z.object({
+  title: z.string().optional(),
+  body: z.string().optional(),
+  courseCode: z.string().nullable().optional(),
+  faculty: z.string().nullable().optional(),
+  department: z.string().nullable().optional(),
+  level: z.string().nullable().optional(),
+  pinned: z.boolean().optional(),
+}).strict();
 export async function listFeedPosts(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const kind = String(req.params.kind);
-  const isStaff = ["admin", "alphaAgent", "agent"].includes(req.user.role);
-  const user = isStaff ? null : await prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, department: true, program: true, level: true, courseRepMeta: true } });
-  const meta = user?.courseRepMeta as { department?: string; program?: string; level?: string } | null;
-  const scope = user?.role === "courseRep" ? meta?.program : user?.program;
+  const user = await loadScopedUser(req.user.id);
+  if (!user) return res.status(401).json({ error: "Unauthenticated" });
+  const staff = isStaffRole(user.role);
+  const scope = staff ? String(req.query.program || "").trim() : programmeScope(user);
   const requestedScope = String(req.query.program || "").trim();
-  if (!isStaff && requestedScope && normalizeScope(scope) !== normalizeScope(requestedScope)) return res.status(403).json({ error: "You cannot access posts outside your academic program" });
-  const level = user?.role === "courseRep" ? meta?.level : user?.level;
-  if (!isStaff && (!scope || (user?.role === "courseRep" && !level))) return res.json({ posts: [] });
-  const posts = await prisma.feedPost.findMany({ where: { kind, ...(isStaff ? {} : { department: scope, level }) }, orderBy: [{ pinned: "desc" }, { createdAt: "desc" }], take: 100 });
+  if (!staff && requestedScope && normalizeScope(scope) !== normalizeScope(requestedScope)) return res.status(403).json({ error: "You cannot access posts outside your academic program" });
+  const level = staff
+    ? String(req.query.level || "").trim()
+    : String((user.courseRepMeta as { level?: string } | null)?.level || user.level || "").trim();
+  if (!staff && (!scope || (user.role === "courseRep" && !level))) return res.json({ posts: [] });
+  const institutionId = staff && hasGlobalInstitutionAccess(user.role)
+    ? String(req.query.institutionId || "").trim() || undefined
+    : institutionOf(user);
+  const posts = await prisma.feedPost.findMany({
+    where: {
+      kind,
+      ...(institutionId ? { institutionId } : {}),
+      ...(scope ? { department: { equals: scope, mode: "insensitive" } } : {}),
+      ...(level ? { OR: [{ level: { equals: level, mode: "insensitive" } }, { level: null }] } : {}),
+    },
+    orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+    take: 100,
+  });
   const authors = await prisma.user.findMany({
     where: { id: { in: [...new Set(posts.map((post) => post.authorId))] } },
     select: { id: true, name: true, nickname: true, email: true },
@@ -270,33 +314,52 @@ export async function createFeedPost(req: Request, res: Response) {
   try {
     const body = postSchema.parse(req.body);
     const targetScope = String(body.program || "").trim();
+    const author = await loadScopedUser(req.user.id);
+    if (!author) return res.status(401).json({ error: "Unauthenticated" });
     if (req.user.role === "courseRep") {
-      const rep = await prisma.user.findUnique({ where: { id: req.user.id }, select: { department: true, program: true, level: true, courseRepMeta: true } });
-      const meta = rep?.courseRepMeta as { department?: string; program?: string; level?: string } | null;
+      const meta = author.courseRepMeta as { program?: string; level?: string } | null;
       const assignedScope = meta?.program || "";
-      const assignedLevel = meta?.level || "";
+      const assignedLevel = meta?.level || author.level || "";
       if (String(req.params.kind) !== "course" || !targetScope || normalizeScope(targetScope) !== normalizeScope(assignedScope) || !levelsMatch(body.level, assignedLevel)) {
         return res.status(403).json({ error: "Course Reps can only post to their assigned program and level" });
       }
     }
     if (body.department && !targetScope) return res.status(400).json({ error: "Program is required for scoped feed posts" });
-    const { program: _program, ...postData } = body;
-    const author = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { name: true, nickname: true },
-    });
-    const post = await prisma.feedPost.create({ data: { ...postData, department: targetScope || null, kind: String(req.params.kind), authorId: req.user.id, authorName: author?.name || author?.nickname || "User", authorRole: req.user.role } });
+    const { program: _program, institutionId: _requestedInstitution, ...postData } = body;
+    if (!hasGlobalInstitutionAccess(author.role) && body.institutionId && body.institutionId !== institutionOf(author)) {
+      return res.status(403).json({ error: "You can only post to your institution" });
+    }
+    const postInstitutionId = hasGlobalInstitutionAccess(author.role) && body.institutionId
+      ? body.institutionId
+      : institutionOf(author);
+    if (!(await prisma.institution.findUnique({ where: { id: postInstitutionId }, select: { id: true } }))) {
+      return res.status(400).json({ error: "Select a valid institution for this post" });
+    }
+    const post = await prisma.feedPost.create({ data: { ...postData, department: targetScope || null, institutionId: postInstitutionId, kind: String(req.params.kind), authorId: req.user.id, authorName: author.name || "User", authorRole: req.user.role } });
+    broadcastProgramme("feed", post, "created");
     res.status(201).json({ post });
   }
   catch (err) { if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors }); res.status(500).json({ error: "Post creation failed" }); }
 }
 export async function updateFeedPost(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
-  const body = postSchema.partial().parse(req.body);
-  const reactionOrCommentOnly = Object.keys(body).every((key) => key === "reactions" || key === "comments");
-  const result = await prisma.feedPost.updateMany({ where: { id: String(req.params.id), ...(reactionOrCommentOnly ? {} : { authorId: req.user.id }) }, data: body });
-  if (!result.count) return res.status(404).json({ error: "Post not found" });
-  res.json({ ok: true });
+  const parsed = postPatchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.errors });
+  const user = await loadScopedUser(req.user.id);
+  if (!user) return res.status(401).json({ error: "Unauthenticated" });
+  const existing = await prisma.feedPost.findUnique({ where: { id: String(req.params.id) } });
+  if (!existing) return res.status(404).json({ error: "Post not found" });
+  const body = parsed.data;
+  if (!canSeeScoped(user, existing)) return res.status(403).json({ error: "This post belongs to another programme" });
+  if (!isStaffRole(user.role) && Object.keys(body).some((key) => !["title", "body", "courseCode"].includes(key))) {
+    return res.status(403).json({ error: "You cannot change a post's academic scope" });
+  }
+  if (existing.authorId !== user.id && !isStaffRole(user.role)) {
+    return res.status(403).json({ error: "You can't change this post" });
+  }
+  const post = await prisma.feedPost.update({ where: { id: existing.id }, data: body });
+  broadcastProgramme("feed", post, "updated");
+  res.json({ ok: true, post });
 }
 
 const saveSchema = z.object({ materialId: z.string().min(1), title: z.string().optional(), url: z.string().optional(), meta: z.any().optional() });
@@ -317,9 +380,14 @@ export async function deleteMaterialSave(req: Request, res: Response) {
 }
 export async function deleteFeedPost(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
-  const canDeleteAny = ["admin", "alphaAgent", "agent"].includes(req.user.role);
-  const result = await prisma.feedPost.deleteMany({ where: { id: String(req.params.id), ...(canDeleteAny ? {} : { authorId: req.user.id }) } });
+  const user = await loadScopedUser(req.user.id);
+  if (!user) return res.status(401).json({ error: "Unauthenticated" });
+  const existing = await prisma.feedPost.findUnique({ where: { id: String(req.params.id) } });
+  if (!existing) return res.status(404).json({ error: "Post not found" });
+  if (!canSeeScoped(user, existing)) return res.status(403).json({ error: "This post belongs to another programme" });
+  const result = await prisma.feedPost.deleteMany({ where: { id: String(req.params.id), ...(isStaffRole(user.role) ? {} : { authorId: req.user.id }) } });
   if (!result.count) return res.status(404).json({ error: "Post not found" });
+  broadcastProgramme("feed", existing, "deleted");
   res.status(204).send();
 }
 

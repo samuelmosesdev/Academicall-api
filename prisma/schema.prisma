@@ -63,6 +63,11 @@ model User {
   faculty                 String?
   program                 String?
   level                   String?
+  institutionId           String?
+  institution             Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  facultyId               String?
+  departmentId            String?
+  programId               String?
   matricNumber            String?
   phone                   String?
   bio                     String?
@@ -110,15 +115,20 @@ model User {
   profileChangeRequests ProfileChangeRequest[]
   subscriptions       Subscription[]
   departmentMemberships DepartmentMembership[] @relation("DeptMemberships")
+  studyGroupsCreated    StudyGroup[]           @relation("StudyGroupCreator")
+  studyGroupMemberships StudyGroupMember[]     @relation("StudyGroupMemberUser")
+  studyGroupMessages    StudyGroupMessage[]    @relation("StudyGroupMessageSender")
 
   @@index([role])
   @@index([department])
+  @@index([institutionId])
   @@index([plan])
   @@map("users")
 }
 
 model Document {
   id           String   @id @default(uuid())
+  institutionId String?
   title        String
   description  String?
   fileUrl      String?
@@ -149,6 +159,7 @@ model Document {
   @@index([uploadedById])
   @@index([courseId])
   @@index([status])
+  @@index([institutionId, department, level])
   @@map("documents")
 }
 
@@ -226,6 +237,7 @@ model DepartmentMembership {
   department          String
   faculty             String?
   level               String?
+  institutionId       String?
   status              String    @default("pending")
   requestedAt         DateTime  @default(now())
   admittedAt          DateTime?
@@ -235,11 +247,15 @@ model DepartmentMembership {
   withdrawStatus      String?
   withdrawReviewedAt  DateTime?
   withdrawReviewedBy  String?
+  reviewReason        String?
+  reviewedById        String?
+  reviewedAt          DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
-  @@unique([userId, department])
+  @@unique([userId, institutionId, department])
   @@index([department, status])
+  @@index([institutionId, department])
   @@index([userId])
   @@map("department_memberships")
 }
@@ -388,10 +404,14 @@ model ClassEvent {
   level         String?
   createdBy     String
   createdByName String?
+  institutionId String?
+  comments      Json?
+  reactions     Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([department, level])
+  @@index([institutionId, department])
   @@index([createdBy])
   @@map("class_events")
 }
@@ -426,10 +446,12 @@ model FeedPost {
   authorPhoto String?
   comments    Json?
   reactions   Json?
+  institutionId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([kind, department, level])
+  @@index([institutionId, kind, department])
   @@map("feed_posts")
 }
 
@@ -600,4 +622,164 @@ model StaffChatMessage {
 
   @@index([createdAt])
   @@map("staff_chat_messages")
+}
+
+model Institution {
+  id           String   @id
+  name         String
+  displayName  String?
+  abbreviation String?
+  type         String?
+  category     String?
+  ownership    String?
+  state        String?
+  source       String   @default("ibass")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  faculties   Faculty[]
+  users       User[]
+  studyGroups StudyGroup[]
+
+  @@unique([name, abbreviation])
+  @@index([name])
+  @@index([state])
+  @@map("institutions")
+}
+
+model Faculty {
+  id            String      @id
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  name          String
+  kind          String      @default("faculty")
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+
+  departments AcademicDepartment[]
+
+  @@unique([institutionId, name])
+  @@map("faculties")
+}
+
+model AcademicDepartment {
+  id        String   @id
+  facultyId String
+  faculty   Faculty  @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  name      String
+  derived   Boolean  @default(false)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  programs Program[]
+
+  @@unique([facultyId, name])
+  @@map("academic_departments")
+}
+
+model Program {
+  id           String             @id
+  departmentId String
+  department   AcademicDepartment @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  name         String
+  status       String             @default("approved")
+  duration     String?
+  award        String?
+  utmeSubjects String?
+  active       Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+
+  @@unique([departmentId, name])
+  @@map("programs")
+}
+
+model StudyGroup {
+  id                 String       @id @default(uuid())
+  code               String       @unique
+  name               String
+  description        String?
+  iconUrl            String?
+  createdById        String
+  createdBy          User         @relation("StudyGroupCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  approvalRequired   Boolean      @default(true)
+  maxMembers         Int          @default(200)
+  memberCount        Int          @default(1)
+  official           Boolean      @default(false)
+  institutionId      String?
+  institution        Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  scopeType          String       @default("open")
+  faculty            String?
+  department         String?
+  program            String?
+  courseCode         String?
+  level              String?
+  lastMessageAt      DateTime?
+  lastMessagePreview String?
+  lastMessageSender  String?
+  lastMessageType    String?
+  lastScopeInviteAt  DateTime?
+  archived           Boolean      @default(false)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  members  StudyGroupMember[]
+  messages StudyGroupMessage[]
+
+  @@index([createdById])
+  @@index([institutionId, program, level])
+  @@map("study_groups")
+}
+
+model StudyGroupMember {
+  id                 String     @id @default(uuid())
+  groupId            String
+  group              StudyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User       @relation("StudyGroupMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  role               String     @default("member")
+  status             String     @default("pending")
+  requestedAt        DateTime   @default(now())
+  joinedAt           DateTime?
+  reviewedById       String?
+  reviewedAt         DateTime?
+  lastReadAt         DateTime?
+  historyAccess      String     @default("none")
+  historyRequestedAt DateTime?
+  historyReviewedAt  DateTime?
+  historyReviewedBy  String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([groupId, userId])
+  @@index([userId, status])
+  @@index([groupId, status])
+  @@index([groupId, historyAccess])
+  @@map("study_group_members")
+}
+
+model StudyGroupMessage {
+  id                 String     @id @default(uuid())
+  groupId            String
+  group              StudyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  senderId           String?
+  sender             User?      @relation("StudyGroupMessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+  type               String     @default("text")
+  text               String?
+  attachmentUrl      String?
+  attachmentName     String?
+  attachmentMime     String?
+  attachmentBytes    Int?
+  attachmentWidth   Int?
+  attachmentHeight  Int?
+  attachmentDuration Int?
+  thumbnailUrl       String?
+  clientId           String?
+  deletedAt          DateTime?
+  deletedById        String?
+  createdAt          DateTime   @default(now())
+
+  @@unique([groupId, clientId])
+  @@index([groupId, createdAt])
+  @@map("study_group_messages")
 }

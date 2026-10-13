@@ -4,6 +4,8 @@ import { prisma } from "../lib/prisma";
 import { Prisma, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
+import { resolveAcademicSelection } from "./institutions.controller";
+import { DEFAULT_INSTITUTION_ID, institutionOf } from "../lib/scope";
 
 export async function listUsers(req: Request, res: Response) {
   const role = req.query.role as string | undefined;
@@ -34,6 +36,10 @@ export async function listUsers(req: Request, res: Response) {
       faculty: true,
       program: true,
       level: true,
+      institutionId: true,
+      facultyId: true,
+      departmentId: true,
+      programId: true,
       status: true,
       photoUrl: true,
       courseRepMeta: true,
@@ -58,6 +64,7 @@ function normalizeLevel(value: unknown) {
 /** Any authenticated user can check whether a program-level Course Rep exists. */
 export async function courseRepStatus(req: Request, res: Response) {
   try {
+    if (!req.user) return res.status(401).json({ error: "Unauthenticated", hasCourseRep: false });
     const program = String(req.query.program || "").trim();
     const level = String(req.query.level || "").trim();
     const scope = program;
@@ -69,8 +76,20 @@ export async function courseRepStatus(req: Request, res: Response) {
       });
     }
 
+    const requester = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { institutionId: true },
+    });
+    if (!requester) return res.status(401).json({ error: "User not found", hasCourseRep: false });
+    const institutionId = institutionOf(requester);
     const reps = await prisma.user.findMany({
-      where: { role: "courseRep", status: "active" },
+      where: {
+        role: "courseRep",
+        status: "active",
+        ...(institutionId === DEFAULT_INSTITUTION_ID
+          ? { OR: [{ institutionId }, { institutionId: null }] }
+          : { institutionId }),
+      },
       select: {
         id: true,
         name: true,
@@ -79,7 +98,6 @@ export async function courseRepStatus(req: Request, res: Response) {
         level: true,
         courseRepMeta: true,
       },
-      take: 200,
     });
 
     const found = reps.find((candidate) => {
@@ -126,6 +144,11 @@ export async function getUser(req: Request, res: Response) {
       faculty: true,
       program: true,
       level: true,
+      institutionId: true,
+      facultyId: true,
+      departmentId: true,
+      programId: true,
+      institution: { select: { id: true, name: true, displayName: true, abbreviation: true } },
       matricNumber: true,
       phone: true,
       bio: true,
@@ -182,6 +205,10 @@ const updateProfileSchema = z.object({
   canImportAI: z.boolean().optional(),
   autoPublish: z.boolean().optional(),
   customCourses: z.array(z.any()).optional(),
+  institutionId: z.string().min(1).nullable().optional(),
+  facultyId: z.string().min(1).nullable().optional(),
+  departmentId: z.string().min(1).nullable().optional(),
+  programId: z.string().min(1).nullable().optional(),
 });
 
 async function createUniqueId() {
@@ -207,20 +234,38 @@ export async function updateMe(req: Request, res: Response) {
       const department = String(body.department ?? current.department ?? "").trim();
       const faculty = String(body.faculty ?? current.faculty ?? "").trim();
       const level = String(body.level ?? current.level ?? "").trim();
-      if (!program || !department || !faculty || !level) {
+      if (!(body.institutionId ?? current.institutionId) || !program || !department || !faculty || !level) {
         return res.status(400).json({
-          error: "Faculty, department, program, and level are required to complete your profile.",
+          error: "Institution, faculty, department, program, and level are required to complete your profile.",
         });
       }
     }
 
-    const identityFields = ["department", "faculty", "program", "level"] as const;
+    if (current.profileComplete && body.profileComplete === false) {
+      return res.status(400).json({ error: "A completed profile cannot be marked incomplete." });
+    }
+
+    const identityFields = [
+      "department", "faculty", "program", "level",
+      "institutionId", "facultyId", "departmentId", "programId",
+    ] as const;
     const changingAcademicIdentity = identityFields.some(
       (field) => body[field] !== undefined && body[field] !== (current[field] ?? null)
     );
     if (changingAcademicIdentity && current.profileComplete && String(current.program || "").trim()) {
       return res.status(403).json({ error: "Academic details can only be changed through a profile change request" });
     }
+
+    const academicIdsProvided =
+      body.facultyId !== undefined || body.departmentId !== undefined || body.programId !== undefined;
+    if (academicIdsProvided && body.institutionId === undefined && !current.institutionId) {
+      return res.status(400).json({ error: "Choose an institution before selecting its academic structure." });
+    }
+    const academicSelection: Prisma.UserUncheckedUpdateInput | null = body.institutionId === undefined
+      ? null
+      : body.institutionId
+        ? await resolveAcademicSelection(body)
+        : { institutionId: null, facultyId: null, departmentId: null, programId: null };
 
     // uniqueId can only be set once
     if (body.uniqueId && current.uniqueId) {
@@ -264,6 +309,7 @@ export async function updateMe(req: Request, res: Response) {
           : generatedUniqueId
             ? { uniqueId: generatedUniqueId }
             : {}),
+        ...(academicSelection || {}),
           canImportAI: body.canImportAI,
           autoPublish: body.autoPublish,
           customCourses: body.customCourses,
@@ -280,6 +326,11 @@ export async function updateMe(req: Request, res: Response) {
         faculty: true,
         program: true,
         level: true,
+        institutionId: true,
+        facultyId: true,
+        departmentId: true,
+        programId: true,
+        institution: { select: { id: true, name: true, displayName: true, abbreviation: true } },
         matricNumber: true,
         phone: true,
         bio: true,
@@ -304,6 +355,9 @@ export async function updateMe(req: Request, res: Response) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: err.errors });
     }
+    if (err && typeof err === "object" && "status" in err && err.status === 400 && "message" in err) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: "Update failed" });
   }
@@ -325,11 +379,20 @@ const adminUpdateSchema = z.object({
   fcmToken: z.string().nullable().optional(),
   deviceToken: z.string().nullable().optional(),
   avatarUrl: z.string().nullable().optional(),
+  institutionId: z.string().min(1).nullable().optional(),
+  facultyId: z.string().min(1).nullable().optional(),
+  departmentId: z.string().min(1).nullable().optional(),
+  programId: z.string().min(1).nullable().optional(),
 });
 
 export async function adminUpdateUser(req: Request, res: Response) {
   try {
     const body = adminUpdateSchema.parse(req.body);
+    const academicSelection: Prisma.UserUncheckedUpdateInput | null = body.institutionId === undefined
+      ? null
+      : body.institutionId
+        ? await resolveAcademicSelection(body)
+        : { institutionId: null, facultyId: null, departmentId: null, programId: null };
     const meta = body.courseRepMeta;
     if (body.role === "courseRep" || (meta !== undefined && meta !== null)) {
       const program = String(meta?.program || "").trim();
@@ -359,7 +422,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
       }
     }
 
-    const data: Prisma.UserUpdateInput = {};
+    const data: Prisma.UserUncheckedUpdateInput = {};
 
     if (body.role !== undefined) data.role = body.role;
     if (body.plan !== undefined) data.plan = body.plan;
@@ -377,6 +440,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
     if (body.fcmToken !== undefined) data.fcmToken = body.fcmToken;
     if (body.deviceToken !== undefined) data.deviceToken = body.deviceToken;
     if (body.avatarUrl !== undefined) data.avatarUrl = body.avatarUrl;
+    if (academicSelection) Object.assign(data, academicSelection);
     if (body.courseRepMeta !== undefined) {
       data.courseRepMeta = body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta;
     }
@@ -403,6 +467,11 @@ export async function adminUpdateUser(req: Request, res: Response) {
         faculty: true,
         program: true,
         level: true,
+        institutionId: true,
+        facultyId: true,
+        departmentId: true,
+        programId: true,
+        institution: { select: { id: true, name: true, displayName: true, abbreviation: true } },
         courseRepMeta: true,
         assignedBy: true,
         assignedAt: true,

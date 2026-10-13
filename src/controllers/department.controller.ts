@@ -1,10 +1,15 @@
 import { Request, Response } from "express";
 import { prisma } from "../lib/prisma";
+import { DEFAULT_INSTITUTION_ID, institutionOf } from "../lib/scope";
 
 const staffRoles = ["admin", "alphaAgent", "agent"];
 
 function isStaff(role?: string) {
   return staffRoles.includes(role || "");
+}
+
+function hasGlobalInstitutionAccess(role?: string) {
+  return role === "admin" || role === "alphaAgent";
 }
 
 function isCourseRep(role?: string) {
@@ -17,7 +22,7 @@ function normalizeLevel(value: unknown) {
 
 async function currentUser(req: Request) {
   if (!req.user) return null;
-  return prisma.user.findUnique({ where: { id: req.user.id }, select: { id: true, role: true, department: true, program: true, faculty: true, level: true, courseRepMeta: true } });
+  return prisma.user.findUnique({ where: { id: req.user.id }, select: { id: true, role: true, department: true, program: true, faculty: true, level: true, institutionId: true, courseRepMeta: true } });
 }
 
 function effectiveScope(user: any) {
@@ -32,8 +37,8 @@ export async function requestJoin(req: Request, res: Response) {
   if (!scope) return res.status(400).json({ error: "Program is required" });
 
   const membership = await prisma.departmentMembership.upsert({
-    where: { userId_department: { userId: user.id, department: scope } },
-    create: { userId: user.id, department: scope, faculty: user.faculty || null, level: user.level || null, status: "pending" },
+    where: { userId_institutionId_department: { userId: user.id, institutionId: institutionOf(user), department: scope } },
+    create: { userId: user.id, institutionId: institutionOf(user), department: scope, faculty: user.faculty || null, level: user.level || null, status: "pending" },
     update: { status: "pending", withdrawStatus: null, withdrawReason: null, withdrawRequestedAt: null },
   });
   res.status(201).json({ membership, message: membership.status === "active" ? "Already a member" : "Request sent" });
@@ -44,7 +49,7 @@ export async function myMembership(req: Request, res: Response) {
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
   const scope = String(user.program || "").trim();
   if (!scope) return res.json({ membership: null });
-  const membership = await prisma.departmentMembership.findUnique({ where: { userId_department: { userId: user.id, department: scope } } });
+  const membership = await prisma.departmentMembership.findUnique({ where: { userId_institutionId_department: { userId: user.id, institutionId: institutionOf(user), department: scope } } });
   res.json({ membership });
 }
 
@@ -53,7 +58,26 @@ export async function listMembers(req: Request, res: Response) {
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
   if (!isStaff(user.role) && !isCourseRep(user.role)) return res.status(403).json({ error: "Forbidden" });
   const requestedScope = String(req.query.program || "").trim();
-  const scope = requestedScope || effectiveScope(user);
+  const requestedInstitution = String(req.query.institutionId || "").trim();
+  if (
+    isStaff(user.role) &&
+    !hasGlobalInstitutionAccess(user.role) &&
+    requestedInstitution &&
+    requestedInstitution !== institutionOf(user)
+  ) {
+    return res.status(403).json({ error: "Wrong institution scope" });
+  }
+  if (
+    isCourseRep(user.role) &&
+    requestedScope &&
+    requestedScope.toLowerCase() !== effectiveScope(user).toLowerCase()
+  ) {
+    return res.status(403).json({ error: "Wrong program scope" });
+  }
+  const scope = isCourseRep(user.role) ? effectiveScope(user) : requestedScope || effectiveScope(user);
+  const institutionId = hasGlobalInstitutionAccess(user.role) && requestedInstitution
+    ? requestedInstitution
+    : institutionOf(user) || DEFAULT_INSTITUTION_ID;
   if (!scope) return res.status(400).json({ error: "Program required" });
   const repMeta = user.courseRepMeta as { level?: string } | null;
   const assignedLevel = isCourseRep(user.role) ? String(repMeta?.level || "").trim() : "";
@@ -64,6 +88,7 @@ export async function listMembers(req: Request, res: Response) {
   const members = await prisma.departmentMembership.findMany({
     where: {
       department: scope,
+      institutionId,
       ...(isCourseRep(user.role) ? { level: assignedLevel } : {}),
       ...(status ? { status } : {}),
     },
@@ -88,11 +113,20 @@ async function membershipForAction(req: Request, res: Response) {
   }
   if (
     isCourseRep(user.role) &&
-    (membership.department.toLowerCase() !== effectiveScope(user).toLowerCase() ||
+    (membership.institutionId !== institutionOf(user) ||
+      membership.department.toLowerCase() !== effectiveScope(user).toLowerCase() ||
       !normalizeLevel(repMeta?.level) ||
       normalizeLevel(membership.level) !== normalizeLevel(repMeta?.level))
   ) {
     res.status(403).json({ error: "Wrong program scope" });
+    return { user, membership: null };
+  }
+  if (
+    isStaff(user.role) &&
+    !hasGlobalInstitutionAccess(user.role) &&
+    membership.institutionId !== institutionOf(user)
+  ) {
+    res.status(403).json({ error: "Wrong institution scope" });
     return { user, membership: null };
   }
   return { user, membership };
@@ -130,6 +164,9 @@ export async function reviewWithdraw(req: Request, res: Response) {
   if (!["approve", "reject"].includes(action)) return res.status(400).json({ error: "action must be approve or reject" });
   const existing = await prisma.departmentMembership.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Not found" });
+  if (!hasGlobalInstitutionAccess(user.role) && existing.institutionId !== institutionOf(user)) {
+    return res.status(403).json({ error: "Wrong institution scope" });
+  }
   if (existing.withdrawStatus !== "pending") return res.status(400).json({ error: "No pending withdrawal" });
   const membership = await prisma.departmentMembership.update({ where: { id: existing.id }, data: { withdrawStatus: action === "approve" ? "approved" : "rejected", withdrawReviewedAt: new Date(), withdrawReviewedBy: user.id, ...(action === "approve" ? { status: "withdrawn" } : {}) } });
   res.json({ membership });
