@@ -47,6 +47,7 @@ router.post("/users/:id/reset-password", authenticate, requireAdmin, usersCtrl.a
 router.delete("/users/:id", authenticate, requireAdmin, usersCtrl.deleteUser);
 
 // Documents
+router.get("/documents/mine", authenticate, docsCtrl.listMyDocuments);
 router.get("/documents", authenticate, docsCtrl.listDocuments);
 router.get("/documents/:id", authenticate, docsCtrl.getDocument);
 router.post("/documents", authenticate, docsCtrl.createDocument);
@@ -72,7 +73,7 @@ router.delete("/profile-change-requests/:id", authenticate, requireStaff, reques
 // Courses
 router.get("/courses", authenticate, coursesCtrl.listCourses);
 router.get("/courses/:id", authenticate, coursesCtrl.getCourse);
-router.post("/courses", authenticate, requireStaff, coursesCtrl.createCourse);
+router.post("/courses", authenticate, coursesCtrl.createCourse);
 router.get("/enrollments", authenticate, enrollmentsCtrl.listEnrollments);
 router.post("/enrollments", authenticate, enrollmentsCtrl.createEnrollment);
 router.patch("/enrollments/:id", authenticate, enrollmentsCtrl.updateEnrollment);

@@ -79,6 +79,7 @@ router.patch("/users/:id", auth_1.authenticate, auth_1.requireAdminOrAlpha, user
 router.post("/users/:id/reset-password", auth_1.authenticate, auth_1.requireAdmin, usersCtrl.adminResetPassword);
 router.delete("/users/:id", auth_1.authenticate, auth_1.requireAdmin, usersCtrl.deleteUser);
 // Documents
+router.get("/documents/mine", auth_1.authenticate, docsCtrl.listMyDocuments);
 router.get("/documents", auth_1.authenticate, docsCtrl.listDocuments);
 router.get("/documents/:id", auth_1.authenticate, docsCtrl.getDocument);
 router.post("/documents", auth_1.authenticate, docsCtrl.createDocument);
@@ -102,7 +103,7 @@ router.delete("/profile-change-requests/:id", auth_1.authenticate, auth_1.requir
 // Courses
 router.get("/courses", auth_1.authenticate, coursesCtrl.listCourses);
 router.get("/courses/:id", auth_1.authenticate, coursesCtrl.getCourse);
-router.post("/courses", auth_1.authenticate, auth_1.requireStaff, coursesCtrl.createCourse);
+router.post("/courses", auth_1.authenticate, coursesCtrl.createCourse);
 router.get("/enrollments", auth_1.authenticate, enrollmentsCtrl.listEnrollments);
 router.post("/enrollments", auth_1.authenticate, enrollmentsCtrl.createEnrollment);
 router.patch("/enrollments/:id", auth_1.authenticate, enrollmentsCtrl.updateEnrollment);

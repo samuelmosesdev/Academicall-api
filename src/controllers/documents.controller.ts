@@ -16,12 +16,30 @@ export async function listDocuments(req: Request, res: Response) {
     where: {
       ...(courseId ? { courseId } : {}),
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
-      ...(!staff ? { status: "approved" } : status ? { status } : {}),
+      ...(!staff
+        ? {
+            status: "approved",
+            AND: [{ OR: [{ source: null }, { source: { not: "personal" } }] }],
+          }
+        : status
+          ? { status }
+          : {}),
     },
     include: {
       uploadedBy: { select: { id: true, name: true, email: true } },
       course: { select: { id: true, title: true, code: true } },
     },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+  res.json({ documents });
+}
+
+export async function listMyDocuments(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  const documents = await prisma.document.findMany({
+    where: { uploadedById: req.user.id, source: "personal" },
+    include: { course: { select: { id: true, title: true, code: true } } },
     orderBy: { createdAt: "desc" },
     take: 200,
   });
@@ -34,6 +52,13 @@ export async function getDocument(req: Request, res: Response) {
     include: { uploadedBy: { select: { id: true, name: true, email: true } }, course: true },
   });
   if (!document) return res.status(404).json({ error: "Document not found" });
+  if (
+    document.source === "personal" &&
+    document.uploadedById !== req.user?.id &&
+    !isStaff(req.user?.role)
+  ) {
+    return res.status(404).json({ error: "Document not found" });
+  }
   if (!isStaff(req.user?.role) && document.status !== "approved") {
     return res.status(403).json({ error: "Material not yet approved" });
   }
@@ -72,34 +97,75 @@ export async function createDocument(req: Request, res: Response) {
     const body = createSchema.parse(req.body);
     const staff = isStaff(req.user.role);
     const isCourseRep = req.user.role === "courseRep";
-    if (!staff && !isCourseRep) {
-      return res.status(403).json({ error: "Only staff and Course Reps can upload materials" });
+    const isStudent = req.user.role === "user";
+    if ((isCourseRep || isStudent) && !body.fileUrl) {
+      return res.status(400).json({ error: "A file URL is required to upload a material" });
     }
+    const uploader = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { plan: true, courseRepMeta: true, autoPublish: true },
+    });
+    if (!uploader) return res.status(401).json({ error: "User not found" });
+    if (isStudent && uploader.plan === "free") {
+      return res.status(403).json({ error: "A premium plan is required to upload personal materials" });
+    }
+    if (!staff && !isCourseRep && !isStudent) {
+      return res.status(403).json({ error: "You don't have permission to upload materials" });
+    }
+    let assignedProgram: string | null = null;
+    let level: string | null = null;
     if (isCourseRep) {
-      const rep = await prisma.user.findUnique({
-        where: { id: req.user.id },
-        select: { courseRepMeta: true },
-      });
-      const meta = rep?.courseRepMeta as { program?: string; level?: string } | null;
+      const meta = uploader.courseRepMeta as { program?: string; level?: string } | null;
+      assignedProgram = String(meta?.program || "").trim() || null;
+      level = String(meta?.level || "").trim() || null;
       if (
-        !body.program ||
-        normalizeScope(body.program) !== normalizeScope(meta?.program) ||
-        !levelsMatch(body.level, meta?.level)
+        !assignedProgram ||
+        !level ||
+        (body.program && normalizeScope(body.program) !== normalizeScope(assignedProgram)) ||
+        (body.level && !levelsMatch(body.level, level))
       ) {
         return res.status(403).json({ error: "Course Reps can only upload materials for their assigned program and level" });
       }
+      if (body.courseId) {
+        const course = await prisma.course.findUnique({
+          where: { id: body.courseId },
+          select: { department: true, level: true },
+        });
+        if (
+          !course ||
+          normalizeScope(course.department) !== normalizeScope(assignedProgram) ||
+          !levelsMatch(course.level, level)
+        ) {
+          return res.status(403).json({ error: "Course Reps can only attach materials to courses in their assigned program and level" });
+        }
+      }
     }
-    const { program, ...documentBody } = body;
-    const status = body.status || (staff || (req.user as any).autoPublish === true ? "approved" : "pending");
+    const { program: requestedProgram, ...documentBody } = body;
+    const status = isStudent || isCourseRep
+      ? "approved"
+      : body.status || (staff || uploader.autoPublish ? "approved" : "pending");
     const document = await prisma.document.create({
       data: {
         ...documentBody,
-        ...(program ? { department: program } : {}),
+        ...(isStudent
+          ? { courseId: null, faculty: null, department: null, level: null, source: "personal" }
+          : isCourseRep
+            ? { department: assignedProgram, level, source: "courseRep" }
+            : requestedProgram
+              ? { department: requestedProgram }
+              : {}),
         tags: body.tags === null ? Prisma.JsonNull : body.tags,
         uploadedById: req.user.id,
-        source: body.source || (req.user.role === "courseRep" ? "courseRep" : "staff"),
+        source: isStudent
+          ? "personal"
+          : isCourseRep
+            ? "courseRep"
+            : body.source || "staff",
         status,
-        ...(status === "approved" ? { approvedById: req.user.id, approvedAt: new Date() } : {}),
+        ...(status === "approved" && !isStudent && !isCourseRep
+          ? { approvedById: req.user.id, approvedAt: new Date() }
+          : {}),
+        ...(isStudent || isCourseRep ? { approvedAt: new Date() } : {}),
       },
     });
     res.status(201).json({ document });
@@ -115,7 +181,21 @@ export async function updateDocument(req: Request, res: Response) {
   const existing = await prisma.document.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Document not found" });
   if (existing.uploadedById !== req.user.id && !isStaff(req.user.role)) return res.status(403).json({ error: "Forbidden" });
-  const document = await prisma.document.update({ where: { id: existing.id }, data: req.body });
+  let data = req.body;
+  if (existing.source === "personal" && !isStaff(req.user.role)) {
+    const parsed = z.object({
+        title: z.string().min(1).optional(),
+        description: z.string().nullable().optional(),
+        fileUrl: z.string().url().nullable().optional(),
+        thumbnailUrl: z.string().url().nullable().optional(),
+        fileName: z.string().nullable().optional(),
+        fileSize: z.number().int().nonnegative().nullable().optional(),
+        tags: z.array(z.string()).nullable().optional(),
+      }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors });
+    data = parsed.data;
+  }
+  const document = await prisma.document.update({ where: { id: existing.id }, data });
   res.json({ document });
 }
 
