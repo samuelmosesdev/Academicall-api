@@ -16,12 +16,50 @@ import * as paymentsCtrl from "../controllers/payments.controller";
 import * as groupsCtrl from "../controllers/groups.controller";
 import * as institutionsCtrl from "../controllers/institutions.controller";
 import * as realtimeCtrl from "../controllers/realtime.controller";
+import express from "express";
+import * as vaultCtrl from "../controllers/vault.controller";
+import * as newsCtrl from "../controllers/news.controller";
 import departmentRoutes from "./department.routes";
 
 const router = Router();
 const asyncRoute = (handler: RequestHandler): RequestHandler => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
 };
+
+// Vault uploads are raw encrypted-file inputs, not JSON or multipart payloads.
+const vaultUpload = express.raw({
+  type: "application/octet-stream",
+  limit: `${Math.ceil(vaultCtrl.VAULT_LIMITS.maxFileBytes / (1024 * 1024)) + 1}mb`,
+});
+
+// Academicall Vault
+router.get("/vault/status", authenticate, vaultCtrl.status);
+router.post("/vault/pin", authenticate, vaultCtrl.createPin);
+router.post("/vault/unlock", authenticate, vaultCtrl.unlock);
+router.post("/vault/pin/change", authenticate, vaultCtrl.changePin);
+router.post("/vault/recovery/send", authenticate, vaultCtrl.sendRecovery);
+router.post("/vault/recovery/reset", authenticate, vaultCtrl.resetWithCode);
+router.get("/vault/folders", authenticate, vaultCtrl.requireVault, vaultCtrl.listFolders);
+router.post("/vault/folders", authenticate, vaultCtrl.requireVault, vaultCtrl.createFolder);
+router.patch("/vault/folders/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.updateFolder);
+router.delete("/vault/folders/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.deleteFolder);
+router.get("/vault/folders/:id/files", authenticate, vaultCtrl.requireVault, vaultCtrl.listFiles);
+router.post("/vault/folders/:id/files", authenticate, vaultCtrl.requireVault, vaultUpload, vaultCtrl.uploadFile);
+router.get("/vault/files/:id/content", authenticate, vaultCtrl.requireVault, vaultCtrl.fileContent);
+router.patch("/vault/files/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.updateFile);
+router.delete("/vault/files/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.deleteFile);
+
+// Academicall News
+router.get("/news", newsCtrl.optionalAuth, newsCtrl.listNews);
+router.get("/news/desk/posts", authenticate, newsCtrl.requireNewsDesk, newsCtrl.deskList);
+router.post("/news/desk/posts", authenticate, newsCtrl.requireNewsDesk, newsCtrl.createPost);
+router.patch("/news/desk/posts/:id", authenticate, newsCtrl.requireNewsDesk, newsCtrl.updatePost);
+router.delete("/news/desk/posts/:id", authenticate, newsCtrl.requireNewsDesk, newsCtrl.deletePost);
+router.get("/news/:id/comments", newsCtrl.optionalAuth, newsCtrl.listComments);
+router.post("/news/:id/comments", authenticate, newsCtrl.addComment);
+router.delete("/news/comments/:commentId", authenticate, newsCtrl.deleteComment);
+router.post("/news/:id/reactions", authenticate, newsCtrl.react);
+router.get("/news/:slug", newsCtrl.optionalAuth, newsCtrl.getNews);
 
 // Health
 router.get("/health", (_req, res) => {

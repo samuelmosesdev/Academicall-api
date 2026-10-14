@@ -364,7 +364,7 @@ export async function updateMe(req: Request, res: Response) {
 }
 
 const adminUpdateSchema = z.object({
-  role: z.enum(["admin", "alphaAgent", "agent", "courseRep", "user"]).optional(),
+  role: z.enum(["admin", "alphaAgent", "agent", "courseRep", "newsAgent", "user"]).optional(),
   plan: z.enum(["free", "pro", "annual"]).optional(),
   status: z.enum(["active", "suspended", "deleted"]).optional(),
   name: z.string().optional(),
@@ -388,6 +388,9 @@ const adminUpdateSchema = z.object({
 export async function adminUpdateUser(req: Request, res: Response) {
   try {
     const body = adminUpdateSchema.parse(req.body);
+    if (body.role === "newsAgent" && req.user?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can assign the News Agent role." });
+    }
     const academicSelection: Prisma.UserUncheckedUpdateInput | null = body.institutionId === undefined
       ? null
       : body.institutionId
@@ -449,7 +452,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
       data.courseRepMeta = body.courseRepMeta;
     }
 
-    if (body.role === "user") {
+    if (body.role === "user" || body.role === "newsAgent") {
       data.courseRepMeta = Prisma.JsonNull;
     }
 

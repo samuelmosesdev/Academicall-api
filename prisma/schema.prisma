@@ -12,6 +12,7 @@ enum Role {
   alphaAgent
   agent
   courseRep
+  newsAgent
   user
 }
 
@@ -118,6 +119,12 @@ model User {
   studyGroupsCreated    StudyGroup[]           @relation("StudyGroupCreator")
   studyGroupMemberships StudyGroupMember[]     @relation("StudyGroupMemberUser")
   studyGroupMessages    StudyGroupMessage[]    @relation("StudyGroupMessageSender")
+  vault                 VaultAccount?
+  vaultFolders          VaultFolder[]
+  vaultFiles            VaultFile[]
+  newsPosts             NewsPost[]             @relation("NewsAuthor")
+  newsComments          NewsComment[]
+  newsReactions         NewsReaction[]
 
   @@index([role])
   @@index([department])
@@ -782,4 +789,111 @@ model StudyGroupMessage {
   @@unique([groupId, clientId])
   @@index([groupId, createdAt])
   @@map("study_group_messages")
+}
+
+// ── Academicall Vault ─────────────────────────────────────────────────────────
+// PIN-locked private storage. File bytes are AES-256-GCM encrypted at rest.
+model VaultAccount {
+  userId            String    @id
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pinHash           String
+  pinSetAt          DateTime  @default(now())
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime?
+  recoveryHash      String?
+  recoveryExpiresAt DateTime?
+  recoverySentAt    DateTime?
+  recoveryAttempts  Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@map("vault_accounts")
+}
+
+model VaultFolder {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  color     String      @default("violet")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  files     VaultFile[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("vault_folders")
+}
+
+model VaultFile {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folderId  String
+  folder    VaultFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  name      String
+  kind      String // image | pdf
+  mimeType  String
+  size      Int
+  iv        Bytes
+  authTag   Bytes
+  data      Bytes
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([folderId, createdAt])
+  @@map("vault_files")
+}
+
+// ── Academicall News ──────────────────────────────────────────────────────────
+model NewsPost {
+  id           String         @id @default(uuid())
+  slug         String         @unique
+  title        String
+  excerpt      String?
+  body         String
+  coverUrl     String?
+  category     String         @default("Campus")
+  status       String         @default("draft") // draft | published
+  authorId     String?
+  author       User?          @relation("NewsAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  publishedAt  DateTime?
+  viewCount    Int            @default(0)
+  commentCount Int            @default(0)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  comments     NewsComment[]
+  reactions    NewsReaction[]
+
+  @@index([status, publishedAt])
+  @@index([category])
+  @@map("news_posts")
+}
+
+model NewsComment {
+  id        String    @id @default(uuid())
+  postId    String
+  post      NewsPost  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body      String
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([postId, createdAt])
+  @@map("news_comments")
+}
+
+model NewsReaction {
+  postId    String
+  post      NewsPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // like | love | fire | clap | wow
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId])
+  @@index([postId, type])
+  @@map("news_reactions")
 }
