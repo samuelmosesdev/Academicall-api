@@ -12,6 +12,9 @@ const VERIFICATION_TTL_MS = 15 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 45 * 1000;
 const MAX_VERIFICATION_ATTEMPTS = 5;
 const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
+// Public OAuth client ID; keep synchronized with the frontend fallback and render.yaml.
+const DEFAULT_GOOGLE_CLIENT_ID =
+  "307015602920-v39vhisv32vb15sjastrftuc3s4siq95.apps.googleusercontent.com";
 
 function signToken(user: { id: string; email: string; role: Role }) {
   return jwt.sign(
@@ -188,10 +191,7 @@ export async function changePassword(req: Request, res: Response) {
 }
 
 export async function googleLogin(req: Request, res: Response) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    return res.status(503).json({ error: "Google sign-in is not configured on the API" });
-  }
+  const clientId = process.env.GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
 
   let credential: string;
   try {

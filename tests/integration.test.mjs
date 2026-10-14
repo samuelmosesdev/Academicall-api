@@ -145,7 +145,7 @@ function listen(token) {
 async function main() {
   await new Promise((r) => fileServer.listen(4199, "127.0.0.1", r));
   const api = spawn("node", ["dist/server.js"], {
-    env: { ...process.env, PORT: "4100", JWT_SECRET: SECRET, AUTO_SEED_INSTITUTIONS: "false", ATTACHMENT_ALLOWED_ORIGINS: FILES + "/", NODE_ENV: "test" },
+    env: { ...process.env, PORT: "4100", JWT_SECRET: SECRET, GOOGLE_CLIENT_ID: "", AUTO_SEED_INSTITUTIONS: "false", ATTACHMENT_ALLOWED_ORIGINS: FILES + "/", NODE_ENV: "test" },
     stdio: ["ignore", "ignore", "inherit"],
   });
   for (let i = 0; i < 60; i += 1) {
@@ -154,6 +154,12 @@ async function main() {
   }
 
   try {
+    console.log("\nAuthentication");
+    await test("Google sign-in defaults to the configured public client ID", async () => {
+      const result = await call(null, "POST", "/auth/google", { credential: "" });
+      assert.equal(result.status, 400);
+      assert.equal(result.data.error, "Google credential is required");
+    });
     console.log("\nInstitutions");
     let other;
     await test("lists institutions with UofA first and searches by name", async () => {

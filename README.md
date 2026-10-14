@@ -60,17 +60,17 @@ You should see:
   `JWT_SECRET`, `NODE_ENV=production`, and the deployed frontend origin as
   `CORS_ORIGIN`. For the live site, use `CORS_ORIGIN=https://academicall.site`
   (add `https://www.academicall.site` too if that hostname is enabled).
-4. Keep the `GOOGLE_CLIENT_ID` value in `render.yaml` synchronized with the
-  frontend's `VITE_GOOGLE_CLIENT_ID`. Google sign-in is disabled if the API
-  service does not receive this matching value.
+4. The frontend and API have the same public Google OAuth client ID fallback.
+  If replacing it, set `VITE_GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_ID` to the
+  same value and keep `render.yaml` synchronized.
 5. Configure Brevo transactional email variables on the API service:
   `BREVO_API_KEY`, `BREVO_SENDER_EMAIL=noreply@academicall.site`, and
   `BREVO_REPLY_TO_EMAIL=noreply@academicall.site`, plus optionally
   `BREVO_SENDER_NAME=Academicall`. The sender/domain must be verified in Brevo;
   do not use Brevo's `bounces-...` address as the sender.
-6. Deploy and verify `/api/v1/health` returns `200`. A `503` from
-  `POST /api/v1/auth/google` without a credential means `GOOGLE_CLIENT_ID`
-  still needs to be configured.
+6. Deploy and verify `/api/v1/health` returns `200`. Sending an empty
+  credential to `POST /api/v1/auth/google` should return `400` (credential
+  required); a `503` indicates that the OAuth client configuration is missing.
 
 The container runs `prisma db push` before starting the API. Review the schema
 before the first production deploy and take a database backup before future
