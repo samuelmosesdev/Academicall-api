@@ -6,15 +6,19 @@ import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { resolveAcademicSelection } from "./institutions.controller";
 import { DEFAULT_INSTITUTION_ID, institutionOf } from "../lib/scope";
+import { ADMIN_ONLY, CAPABILITIES, ROLE_DEFAULTS, TAG_DEFAULTS, TAGS, cleanPermissionList, defaultCaps, effectiveCaps, grantable, hasCap, outranks } from "../lib/access";
+import { audit } from "../lib/audit";
 
 export async function listUsers(req: Request, res: Response) {
   const role = req.query.role as string | undefined;
   const search = req.query.q as string | undefined;
+  const tag = req.query.tag as string | undefined;
 
   const users = await prisma.user.findMany({
     where: {
       status: { not: "deleted" },
-      ...(role ? { role: role as Role } : {}),
+      ...(role === "staff" ? { role: { in: ["admin", "alphaAgent", "agent"] as Role[] } } : role ? { role: role as Role } : {}),
+      ...(tag ? { staffTags: { has: tag } } : {}),
       ...(search
         ? {
             OR: [
@@ -44,10 +48,12 @@ export async function listUsers(req: Request, res: Response) {
       photoUrl: true,
       courseRepMeta: true,
       mustChangePassword: true,
+      staffTags: true,
+      lastActiveAt: true,
       createdAt: true,
     },
     orderBy: { createdAt: "desc" },
-    take: 100,
+    take: Math.min(Number(req.query.limit) || 100, 500),
   });
 
   res.json({ users });
@@ -166,13 +172,24 @@ export async function getUser(req: Request, res: Response) {
       studyStreakDays: true,
       materialsOpenedCount: true,
       lastActiveAt: true,
+      staffTags: true,
+      permissions: true,
       createdAt: true,
       updatedAt: true,
     },
   });
 
   if (!user) return res.status(404).json({ error: "User not found" });
-  res.json({ user });
+  res.json({
+    user: {
+      ...user,
+      capabilities: effectiveCaps(user),
+      defaultCapabilities: defaultCaps(user),
+      grantableCapabilities: grantable(user),
+      customPermissions: Array.isArray(user.permissions),
+    },
+    viewer: { canManage: outranks(req.user!, user), caps: req.user!.caps || [] },
+  });
 }
 
 const updateProfileSchema = z.object({
@@ -387,20 +404,32 @@ const adminUpdateSchema = z.object({
 
 export async function adminUpdateUser(req: Request, res: Response) {
   try {
+    const actor = req.user!;
     const body = adminUpdateSchema.parse(req.body);
-    if (body.role === "newsAgent" && req.user?.role !== "admin") {
-      return res.status(403).json({ error: "Only admins can assign the News Agent role." });
+    const target = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (!outranks(actor, target)) return res.status(403).json({ error: "You can't change an account at or above your own rank" });
+    const need = (cap: string) => {
+        if (!hasCap(actor, cap)) throw Object.assign(new Error(`You need the "${cap}" permission for that`), { status: 403 });
+    };
+    const staffRoles = ["admin", "alphaAgent", "agent"];
+    let role = body.role;
+    let tags = [...(target.staffTags || [])];
+    if (role === "newsAgent") {
+        need("users.news");
+        if (!tags.includes("news")) tags.push("news");
+        role = target.role === "newsAgent" ? "user" : target.role === "user" ? undefined : target.role;
     }
     const academicSelection: Prisma.UserUncheckedUpdateInput | null = body.institutionId === undefined
-      ? null
-      : body.institutionId
-        ? await resolveAcademicSelection(body)
+        ? null
+        : body.institutionId
+          ? await resolveAcademicSelection(body)
         : { institutionId: null, facultyId: null, departmentId: null, programId: null };
     const meta = body.courseRepMeta;
-    if (body.role === "courseRep" || (meta !== undefined && meta !== null)) {
-      const program = String(meta?.program || "").trim();
-      const department = String(meta?.department || "").trim();
-      const level = String(meta?.level || "").trim();
+    if (role === "courseRep" || (meta !== undefined && meta !== null)) {
+        const program = String(meta?.program || "").trim();
+        const department = String(meta?.department || "").trim();
+        const level = String(meta?.level || "").trim();
       if (!program || !department || !level) {
         return res.status(400).json({
           error: "A Course Rep assignment requires an explicit program, parent department, and level.",
@@ -416,7 +445,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
         });
       }
       if (
-        body.role === "courseRep" &&
+        role === "courseRep" &&
         (body.program !== program || body.department !== department || body.level !== level)
       ) {
         return res.status(400).json({
@@ -427,37 +456,59 @@ export async function adminUpdateUser(req: Request, res: Response) {
 
     const data: Prisma.UserUncheckedUpdateInput = {};
 
-    if (body.role !== undefined) data.role = body.role;
-    if (body.plan !== undefined) data.plan = body.plan;
-    if (body.status !== undefined) data.status = body.status;
-    if (body.name !== undefined) data.name = body.name;
-    if (body.department !== undefined) data.department = body.department;
-    if (body.faculty !== undefined) data.faculty = body.faculty;
-    if (body.program !== undefined) data.program = body.program;
-    if (body.level !== undefined) data.level = body.level;
-    if (body.mustChangePassword !== undefined) {
+    if (role !== undefined && role !== target.role) {
+      if (staffRoles.includes(role) || staffRoles.includes(target.role)) need("staff.manage");
+      else need("users.courseRep");
+      data.role = role;
+      if (!staffRoles.includes(role)) data.permissions = Prisma.JsonNull;
+      if (role !== "courseRep" && body.courseRepMeta === undefined) data.courseRepMeta = Prisma.JsonNull;
+    }
+    if (body.plan !== undefined && body.plan !== target.plan) {
+      need("users.edit");
+      data.plan = body.plan;
+    }
+    if (body.status !== undefined && body.status !== target.status) {
+      need(body.status === "deleted" ? "users.delete" : "users.suspend");
+      if (actor.id === target.id) return res.status(403).json({ error: "You can't change your own account status" });
+      data.status = body.status;
+    }
+    if (body.mustChangePassword !== undefined && body.mustChangePassword !== target.mustChangePassword) {
+      need("users.password");
       data.mustChangePassword = body.mustChangePassword;
+    }
+    const profileFields = ["name", "department", "faculty", "program", "level", "fcmToken", "deviceToken", "avatarUrl"] as const;
+    const touched = profileFields.filter((key) => body[key] !== undefined && body[key] !== target[key]);
+    if (touched.length || academicSelection) {
+      const repAssignment = (role === "courseRep" || target.role === "courseRep") &&
+        touched.every((key) => ["department", "faculty", "program", "level"].includes(key)) &&
+        !body.name && !body.fcmToken && !body.deviceToken && !body.avatarUrl && body.plan === undefined;
+      need(repAssignment ? "users.courseRep" : "users.edit");
+      for (const key of profileFields) {
+        if (body[key] !== undefined) {
+          if (key === "name") data.name = body.name;
+          if (key === "department") data.department = body.department;
+          if (key === "faculty") data.faculty = body.faculty;
+          if (key === "program") data.program = body.program;
+          if (key === "level") data.level = body.level;
+          if (key === "fcmToken") data.fcmToken = body.fcmToken;
+          if (key === "deviceToken") data.deviceToken = body.deviceToken;
+          if (key === "avatarUrl") data.avatarUrl = body.avatarUrl;
+        }
+      }
+      if (academicSelection) Object.assign(data, academicSelection);
+    }
+    if (body.courseRepMeta !== undefined) {
+      need("users.courseRep");
+      data.courseRepMeta = body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta;
+    } else if (role === "user" && target.role === "courseRep") {
+      data.courseRepMeta = Prisma.JsonNull;
     }
     if (body.assignedBy !== undefined) data.assignedBy = body.assignedBy;
     if (body.assignedAt !== undefined) data.assignedAt = body.assignedAt;
-    if (body.fcmToken !== undefined) data.fcmToken = body.fcmToken;
-    if (body.deviceToken !== undefined) data.deviceToken = body.deviceToken;
-    if (body.avatarUrl !== undefined) data.avatarUrl = body.avatarUrl;
-    if (academicSelection) Object.assign(data, academicSelection);
-    if (body.courseRepMeta !== undefined) {
-      data.courseRepMeta = body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta;
-    }
-
-    if (body.role === "courseRep" && body.courseRepMeta) {
-      data.courseRepMeta = body.courseRepMeta;
-    }
-
-    if (body.role === "user" || body.role === "newsAgent") {
-      data.courseRepMeta = Prisma.JsonNull;
-    }
+    if (tags.join() !== (target.staffTags || []).join()) data.staffTags = tags;
 
     const user = await prisma.user.update({
-      where: { id: String(req.params.id) },
+      where: { id: target.id },
       data,
       select: {
         id: true,
@@ -479,13 +530,19 @@ export async function adminUpdateUser(req: Request, res: Response) {
         assignedBy: true,
         assignedAt: true,
         mustChangePassword: true,
+        staffTags: true,
       },
     });
 
+    if (data.role) await audit(actor, "role.change", { id: target.id, label: target.name || target.email }, { from: target.role, to: data.role });
+    if (data.status) await audit(actor, data.status === "suspended" ? "user.suspend" : data.status === "active" ? "user.reactivate" : "user.delete", { id: target.id, label: target.name || target.email });
+    if (data.staffTags) await audit(actor, "duty.change", { id: target.id, label: target.name || target.email }, { from: target.staffTags, to: tags });
     res.json({ user });
   } catch (err) {
-    if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: err.errors });
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+    if (err && typeof err === "object" && "status" in err && (err as { status?: unknown }).status === 403) {
+      const message = "message" in err && typeof err.message === "string" ? err.message : "Forbidden";
+      return res.status(403).json({ error: message });
     }
     console.error("adminUpdateUser failed:", err);
     const reason =
@@ -525,8 +582,9 @@ function generateTempPassword() {
 export async function adminResetPassword(req: Request, res: Response) {
   try {
     const userId = String(req.params.id);
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true, name: true, role: true } });
     if (!user) return res.status(404).json({ error: "User not found" });
+    if (!outranks(req.user!, user)) return res.status(403).json({ error: "You can't reset the password of an account at or above your rank" });
 
     const tempPassword = generateTempPassword();
     await prisma.user.update({
@@ -536,8 +594,10 @@ export async function adminResetPassword(req: Request, res: Response) {
         mustChangePassword: true,
         passwordResetHash: null,
         passwordResetExpiresAt: null,
+        sessionsRevokedAt: new Date(),
       },
     });
+    await audit(req.user, "user.temp_password", { id: user.id, label: user.name || user.email });
 
     return res.json({
       email: user.email,
@@ -555,6 +615,9 @@ const createAgentSchema = z.object({
   password: z.string().min(6),
   name: z.string().trim().min(1).optional(),
   role: z.enum(["agent", "alphaAgent"]),
+  /** Optional: exactly what this agent may do (defaults for the role otherwise) */
+  permissions: z.array(z.string()).nullable().optional(),
+  tags: z.array(z.enum(["news", "secretary"])).optional(),
 });
 
 export async function createAgent(req: Request, res: Response) {
@@ -574,12 +637,15 @@ export async function createAgent(req: Request, res: Response) {
         agentDomain: body.email.split("@")[1],
         createdByAdmin: true,
         createdByUid: req.user?.id,
+        staffTags: body.tags || [],
+        ...(body.permissions ? { permissions: cleanPermissionList({ role: body.role, staffTags: body.tags || [] }, body.permissions) } : {}),
       },
       select: { id: true, email: true, name: true, role: true, plan: true, uniqueId: true, status: true, emailVerified: true, profileComplete: true, mustChangePassword: true },
     });
     return res.status(201).json({ user });
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+    if ((err as any)?.status === 400) return res.status(400).json({ error: (err as Error).message });
     console.error(err);
     return res.status(500).json({ error: "Could not create agent" });
   }
@@ -587,10 +653,107 @@ export async function createAgent(req: Request, res: Response) {
 
 export async function deleteUser(req: Request, res: Response) {
   try {
-    await prisma.user.update({ where: { id: String(req.params.id) }, data: { status: "deleted" } });
+    const target = await prisma.user.findUnique({ where: { id: String(req.params.id) }, select: { id: true, role: true, name: true, email: true } });
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (!outranks(req.user!, target) || target.id === req.user!.id) return res.status(403).json({ error: "You can't delete this account" });
+    await prisma.user.update({ where: { id: target.id }, data: { status: "deleted", sessionsRevokedAt: new Date() } });
+    await audit(req.user, "user.delete", { id: target.id, label: target.name || target.email });
     return res.json({ ok: true });
   } catch (err) {
     console.error(err);
     return res.status(404).json({ error: "User not found" });
   }
+}
+
+/** Force a password change: they're signed out everywhere and must pick a new password at next sign-in. */
+export async function forcePasswordChange(req: Request, res: Response) {
+  const target = await prisma.user.findUnique({ where: { id: String(req.params.id) }, select: { id: true, role: true, name: true, email: true } });
+  if (!target) return res.status(404).json({ error: "User not found" });
+  if (!outranks(req.user!, target)) return res.status(403).json({ error: "You can't force a password change on an account at or above your rank" });
+  const signOut = req.body?.signOut !== false;
+  await prisma.user.update({ where: { id: target.id }, data: { mustChangePassword: true, ...(signOut ? { sessionsRevokedAt: new Date() } : {}) } });
+  await audit(req.user, "user.force_password_change", { id: target.id, label: target.name || target.email }, { signedOut: signOut });
+  res.json({ ok: true, mustChangePassword: true, signedOut: signOut });
+}
+
+/** Sign someone out of every device. */
+export async function revokeSessions(req: Request, res: Response) {
+  const target = await prisma.user.findUnique({ where: { id: String(req.params.id) }, select: { id: true, role: true, name: true, email: true } });
+  if (!target) return res.status(404).json({ error: "User not found" });
+  if (!outranks(req.user!, target)) return res.status(403).json({ error: "You can't sign out an account at or above your rank" });
+  await prisma.user.update({ where: { id: target.id }, data: { sessionsRevokedAt: new Date() } });
+  await audit(req.user, "user.sign_out_everywhere", { id: target.id, label: target.name || target.email });
+  res.json({ ok: true });
+}
+
+/** The permission catalogue the admin chooses from. */
+export async function accessCatalog(_req: Request, res: Response) {
+  res.json({ capabilities: CAPABILITIES, adminOnly: ADMIN_ONLY, roleDefaults: ROLE_DEFAULTS, tagDefaults: TAG_DEFAULTS, tags: TAGS });
+}
+
+const accessSchema = z.object({
+  tags: z.object({ news: z.boolean().optional(), secretary: z.boolean().optional() }).optional(),
+  /** null = back to the defaults for their role and duties */
+  permissions: z.array(z.string()).nullable().optional(),
+});
+
+/**
+ * Duties and permissions for one person.
+ *  - News duty: anyone with users.news (admins, and Alpha Agents by default).
+ *  - Secretary duty: users.secretary (admins; grantable).
+ *  - Permissions: admins only.
+ */
+export async function updateAccess(req: Request, res: Response) {
+  try {
+    const actor = req.user!;
+    const body = accessSchema.parse(req.body || {});
+    const target = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (!outranks(actor, target) && actor.id !== target.id) return res.status(403).json({ error: "You can't change access for an account at or above your rank" });
+    let tags = [...(target.staffTags || [])];
+    for (const [tag, on] of Object.entries(body.tags || {})) {
+      if (on === undefined) continue;
+      const cap = tag === "news" ? "users.news" : "users.secretary";
+      if (!hasCap(actor, cap)) return res.status(403).json({ error: `You need the "${cap}" permission for that` });
+      tags = on ? [...new Set([...tags, tag])] : tags.filter((t) => t !== tag);
+    }
+    const data: Prisma.UserUpdateInput = { staffTags: tags };
+    if (body.permissions !== undefined) {
+      if (actor.role !== "admin") return res.status(403).json({ error: "Only admins choose what each person can do" });
+      if (target.role === "admin") return res.status(400).json({ error: "Admins always have full access" });
+      data.permissions = body.permissions === null ? Prisma.JsonNull : cleanPermissionList({ ...target, staffTags: tags }, body.permissions);
+    } else if (target.permissions && !tags.includes("secretary")) {
+      // Dropping a duty drops the permissions that came with it.
+      const list = cleanPermissionList({ ...target, staffTags: [...tags, "secretary"] }, target.permissions).filter((c) => !c.startsWith("secretariat."));
+      data.permissions = list;
+    }
+    const user = await prisma.user.update({ where: { id: target.id }, data, select: { id: true, role: true, staffTags: true, permissions: true } });
+    if (tags.join() !== (target.staffTags || []).join()) await audit(actor, "duty.change", { id: target.id, label: target.name || target.email }, { from: target.staffTags, to: tags });
+    if (body.permissions !== undefined) await audit(actor, "permissions.change", { id: target.id, label: target.name || target.email }, { permissions: body.permissions });
+    res.json({ user: { ...user, capabilities: effectiveCaps(user), defaultCapabilities: defaultCaps(user), grantableCapabilities: grantable(user), customPermissions: Array.isArray(user.permissions) } });
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors[0]?.message || "Invalid input" });
+    const e = err as { status?: number; message?: string };
+    if (e.status === 400) return res.status(400).json({ error: e.message });
+    console.error("updateAccess failed:", err);
+    res.status(500).json({ error: "Couldn't update access" });
+  }
+}
+
+/** Everyone with staff power or a duty, with what they can do. */
+export async function listStaffAccess(_req: Request, res: Response) {
+  const people = await prisma.user.findMany({
+    where: { status: { not: "deleted" }, OR: [{ role: { in: ["admin", "alphaAgent", "agent"] } }, { staffTags: { isEmpty: false } }] },
+    select: { id: true, name: true, email: true, role: true, status: true, staffTags: true, permissions: true, photoUrl: true, lastActiveAt: true, mustChangePassword: true },
+    orderBy: [{ role: "asc" }, { name: "asc" }],
+    take: 500,
+  });
+  res.json({
+    people: people.map(({ permissions, ...p }) => ({
+      ...p,
+      capabilities: effectiveCaps({ ...p, permissions }),
+      grantableCapabilities: grantable(p),
+      customPermissions: Array.isArray(permissions),
+    })),
+  });
 }

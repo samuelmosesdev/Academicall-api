@@ -3,7 +3,7 @@
  *
  *  - Anyone (signed in or not) can browse headlines and read a preview.
  *  - Signed-in users read the full story, react, and comment.
- *  - News Agents (role `newsAgent`, assigned by an admin) and admins write,
+ *  - People with the News duty (staffTags "news", given by an admin or Alpha Agent) and admins write,
  *    publish, edit and remove stories, and can moderate comments.
  */
 import { Request, Response, NextFunction } from "express";
@@ -11,6 +11,7 @@ import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { randomBytes } from "crypto";
 import { prisma } from "../lib/prisma";
+import { canWriteNews } from "../lib/access";
 
 export const NEWS_CATEGORIES = ["Campus", "Admissions", "Exams", "Scholarships", "Sports", "Tech", "Opinion", "Events"] as const;
 export const REACTIONS = ["like", "love", "fire", "clap", "wow"] as const;
@@ -34,23 +35,22 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
   if (header?.startsWith("Bearer ")) {
     try {
       const decoded = jwt.verify(header.slice(7), process.env.JWT_SECRET || "dev-secret") as { sub: string };
-      const user = await prisma.user.findUnique({ where: { id: decoded.sub }, select: { id: true, email: true, role: true, status: true } });
-      if (user && user.status === "active") req.user = { id: user.id, email: user.email, role: user.role };
+      const user = await prisma.user.findUnique({ where: { id: decoded.sub }, select: { id: true, email: true, role: true, status: true, staffTags: true } });
+      if (user && user.status === "active") req.user = { id: user.id, email: user.email, role: user.role, staffTags: user.staffTags };
     } catch { /* treat as guest */ }
   }
   next();
 }
 
-export const canWriteNews = (role?: string) => role === "newsAgent" || role === "admin";
 export function requireNewsDesk(req: Request, res: Response, next: NextFunction) {
-  if (!canWriteNews(req.user?.role)) return res.status(403).json({ error: "Only News Agents can do that" });
+  if (!canWriteNews(req.user)) return res.status(403).json({ error: "Only News Agents can do that" });
   next();
 }
 
-const authorSelect = { id: true, name: true, nickname: true, photoUrl: true, avatarUrl: true, role: true } as const;
+const authorSelect = { id: true, name: true, nickname: true, photoUrl: true, avatarUrl: true, role: true, staffTags: true } as const;
 function authorOut(a: any) {
   if (!a) return { name: "Academicall News", photoUrl: null };
-  return { id: a.id, name: a.name || a.nickname || "Academicall News", photoUrl: a.photoUrl || a.avatarUrl || null, role: a.role };
+  return { id: a.id, name: a.name || a.nickname || "Academicall News", photoUrl: a.photoUrl || a.avatarUrl || null, role: a.role, newsTeam: canWriteNews(a) };
 }
 const words = (s: string) => (s.trim().match(/\S+/g) || []).length;
 const readMinutes = (body: string) => Math.max(1, Math.round(words(body) / 220));
@@ -137,13 +137,13 @@ export const listNews = handle(async (req, res) => {
     posts: page.map((p) => cardOut(p, r)),
     nextBefore: posts.length > take ? page[page.length - 1].publishedAt : null,
     categories: NEWS_CATEGORIES,
-    viewer: { signedIn: !!req.user, canWrite: canWriteNews(req.user?.role) },
+    viewer: { signedIn: !!req.user, canWrite: canWriteNews(req.user) },
   });
 });
 
 export const getNews = handle(async (req, res) => {
   const post = await prisma.newsPost.findUnique({ where: { slug: String(req.params.slug) }, include: { author: { select: authorSelect } } });
-  const staffView = post && canWriteNews(req.user?.role);
+  const staffView = post && canWriteNews(req.user);
   if (!post || (post.status !== "published" && !staffView)) throw new HttpError(404, "This story isn't available");
   if (post.status === "published") prisma.newsPost.update({ where: { id: post.id }, data: { viewCount: { increment: 1 } } }).catch(() => {});
   const r = await reactionSummary([post.id], req.user?.id);
@@ -156,7 +156,7 @@ export const getNews = handle(async (req, res) => {
   res.json({
     post: { ...cardOut(post, r), body: signedIn ? post.body : previewOf(post.body), gated: !signedIn },
     related: related.map((p) => cardOut(p, rr)),
-    viewer: { signedIn, canWrite: canWriteNews(req.user?.role), canModerate: canWriteNews(req.user?.role) },
+    viewer: { signedIn, canWrite: canWriteNews(req.user), canModerate: canWriteNews(req.user) },
   });
 });
 
@@ -176,7 +176,7 @@ export const listComments = handle(async (req, res) => {
     gated: !signedIn,
     comments: list.map((c) => ({
       id: c.id, body: c.body, createdAt: c.createdAt, author: authorOut(c.user),
-      mine: c.userId === req.user?.id, canDelete: c.userId === req.user?.id || canWriteNews(req.user?.role),
+      mine: c.userId === req.user?.id, canDelete: c.userId === req.user?.id || canWriteNews(req.user),
     })),
   });
 });
@@ -206,7 +206,7 @@ export const addComment = handle(async (req, res) => {
 export const deleteComment = handle(async (req, res) => {
   const c = await prisma.newsComment.findUnique({ where: { id: String(req.params.commentId) } });
   if (!c || c.deletedAt) throw new HttpError(404, "Comment not found");
-  if (c.userId !== req.user!.id && !canWriteNews(req.user!.role)) throw new HttpError(403, "You can only delete your own comments");
+  if (c.userId !== req.user!.id && !canWriteNews(req.user)) throw new HttpError(403, "You can only delete your own comments");
   await prisma.$transaction([
     prisma.newsComment.update({ where: { id: c.id }, data: { deletedAt: new Date() } }),
     prisma.newsPost.update({ where: { id: c.postId }, data: { commentCount: { decrement: 1 } } }),

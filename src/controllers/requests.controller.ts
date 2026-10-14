@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { hasCap } from "../lib/access";
 
 const requestSchema = z.object({
   type: z.string().optional(), title: z.string().optional(), body: z.string().optional(),
@@ -11,8 +12,9 @@ const requestSchema = z.object({
 });
 
 export async function listRequests(req: Request, res: Response) {
+  const canReview = !!req.user && hasCap(req.user, "requests.review");
   const requests = await prisma.request.findMany({
-    where: req.user && ["user", "newsAgent"].includes(req.user.role) ? { requesterUid: req.user.id } : undefined,
+    where: canReview ? undefined : { requesterUid: req.user!.id },
     orderBy: { createdAt: "desc" }, take: 200,
   });
   res.json({ requests });
@@ -51,7 +53,8 @@ const profileChangeSchema = z.object({
 function profileChangeView(item: any) { return { ...item, userId: item.userId, userName: item.userName, userEmail: item.userEmail }; }
 
 export async function listProfileChangeRequests(req: Request, res: Response) {
-  const requests = await prisma.profileChangeRequest.findMany({ where: req.user && ["user", "newsAgent"].includes(req.user.role) ? { userId: req.user.id } : undefined, orderBy: { createdAt: "desc" }, take: 200 });
+  const canReview = !!req.user && hasCap(req.user, "requests.review");
+  const requests = await prisma.profileChangeRequest.findMany({ where: canReview ? undefined : { userId: req.user!.id }, orderBy: { createdAt: "desc" }, take: 200 });
   res.json({ requests: requests.map(profileChangeView) });
 }
 

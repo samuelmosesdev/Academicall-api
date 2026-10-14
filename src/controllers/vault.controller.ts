@@ -132,7 +132,7 @@ export async function requireVault(req: Request, res: Response, next: NextFuncti
 }
 
 async function usage(userId: string) {
-  const agg = await prisma.vaultFile.aggregate({ where: { userId }, _sum: { size: true }, _count: true });
+  const agg = await prisma.vaultFile.aggregate({ where: { userId, deletedAt: null }, _sum: { size: true }, _count: true });
   return { bytes: agg._sum.size || 0, files: agg._count, quotaBytes: VAULT_LIMITS.quotaBytes, maxFileBytes: VAULT_LIMITS.maxFileBytes };
 }
 
@@ -249,16 +249,16 @@ const folderSchema = z.object({
 });
 
 async function ownFolder(userId: string, id: string) {
-  const f = await prisma.vaultFolder.findFirst({ where: { id, userId } });
+  const f = await prisma.vaultFolder.findFirst({ where: { id, userId, deletedAt: null } });
   if (!f) throw new HttpError(404, "Folder not found");
   return f;
 }
 
 export const listFolders = handle(async (req, res) => {
   const userId = req.user!.id;
-  const folders = await prisma.vaultFolder.findMany({ where: { userId }, orderBy: { updatedAt: "desc" } });
-  const stats = await prisma.vaultFile.groupBy({ by: ["folderId", "kind"], where: { userId }, _count: true, _sum: { size: true }, _max: { createdAt: true } });
-  const recent = await prisma.vaultFile.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 8, select: fileSelect });
+  const folders = await prisma.vaultFolder.findMany({ where: { userId, deletedAt: null }, orderBy: { updatedAt: "desc" } });
+  const stats = await prisma.vaultFile.groupBy({ by: ["folderId", "kind"], where: { userId, deletedAt: null }, _count: true, _sum: { size: true }, _max: { createdAt: true } });
+  const recent = await prisma.vaultFile.findMany({ where: { userId, deletedAt: null }, orderBy: { createdAt: "desc" }, take: 8, select: fileSelect });
   res.json({
     folders: folders.map((f) => {
       const s = stats.filter((x) => x.folderId === f.id);
@@ -279,8 +279,8 @@ export const listFolders = handle(async (req, res) => {
 export const createFolder = handle(async (req, res) => {
   const body = folderSchema.parse(req.body || {});
   const userId = req.user!.id;
-  if ((await prisma.vaultFolder.count({ where: { userId } })) >= VAULT_LIMITS.maxFolders) throw new HttpError(400, `You can have up to ${VAULT_LIMITS.maxFolders} folders`);
-  if (await prisma.vaultFolder.findFirst({ where: { userId, name: { equals: body.name, mode: "insensitive" } } })) throw new HttpError(409, "You already have a folder with that name");
+  if ((await prisma.vaultFolder.count({ where: { userId, deletedAt: null } })) >= VAULT_LIMITS.maxFolders) throw new HttpError(400, `You can have up to ${VAULT_LIMITS.maxFolders} folders`);
+  if (await prisma.vaultFolder.findFirst({ where: { userId, deletedAt: null, name: { equals: body.name, mode: "insensitive" } } })) throw new HttpError(409, "You already have a folder with that name");
   const folder = await prisma.vaultFolder.create({ data: { userId, name: body.name, color: body.color || "violet" } });
   res.status(201).json({ folder: { ...folder, fileCount: 0, imageCount: 0, pdfCount: 0, bytes: 0, lastAddedAt: null } });
 });
@@ -289,7 +289,7 @@ export const updateFolder = handle(async (req, res) => {
   const body = folderSchema.partial().parse(req.body || {});
   const f = await ownFolder(req.user!.id, String(req.params.id));
   if (body.name && body.name.toLowerCase() !== f.name.toLowerCase()) {
-    if (await prisma.vaultFolder.findFirst({ where: { userId: f.userId, name: { equals: body.name, mode: "insensitive" }, NOT: { id: f.id } } })) throw new HttpError(409, "You already have a folder with that name");
+    if (await prisma.vaultFolder.findFirst({ where: { userId: f.userId, deletedAt: null, name: { equals: body.name, mode: "insensitive" }, NOT: { id: f.id } } })) throw new HttpError(409, "You already have a folder with that name");
   }
   const folder = await prisma.vaultFolder.update({ where: { id: f.id }, data: body });
   res.json({ folder });
@@ -297,7 +297,13 @@ export const updateFolder = handle(async (req, res) => {
 
 export const deleteFolder = handle(async (req, res) => {
   const f = await ownFolder(req.user!.id, String(req.params.id));
-  await prisma.vaultFolder.delete({ where: { id: f.id } });
+  // Folder and files go to the trash for 30 days; an admin can bring them back.
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.vaultFile.updateMany({ where: { folderId: f.id, deletedAt: null }, data: { deletedAt: now, deletedById: req.user!.id } }),
+    prisma.vaultFolder.update({ where: { id: f.id }, data: { deletedAt: now, originalName: f.name, name: `${f.name} ~deleted ${f.id.slice(0, 8)}` } }),
+  ]);
+  purgeVaultTrash().catch(() => {});
   res.json({ ok: true, usage: await usage(f.userId) });
 });
 
@@ -306,7 +312,7 @@ const fileSelect = { id: true, folderId: true, name: true, kind: true, mimeType:
 
 export const listFiles = handle(async (req, res) => {
   const f = await ownFolder(req.user!.id, String(req.params.id));
-  const files = await prisma.vaultFile.findMany({ where: { folderId: f.id, userId: f.userId }, orderBy: { createdAt: "desc" }, select: fileSelect });
+  const files = await prisma.vaultFile.findMany({ where: { folderId: f.id, userId: f.userId, deletedAt: null }, orderBy: { createdAt: "desc" }, select: fileSelect });
   res.json({ folder: f, files });
 });
 
@@ -334,7 +340,7 @@ export const uploadFile = handle(async (req, res) => {
 });
 
 async function ownFile(userId: string, id: string) {
-  const file = await prisma.vaultFile.findFirst({ where: { id, userId } });
+  const file = await prisma.vaultFile.findFirst({ where: { id, userId, deletedAt: null } });
   if (!file) throw new HttpError(404, "File not found");
   return file;
 }
@@ -367,7 +373,8 @@ export const updateFile = handle(async (req, res) => {
 
 export const deleteFile = handle(async (req, res) => {
   const file = await ownFile(req.user!.id, String(req.params.id));
-  await prisma.vaultFile.delete({ where: { id: file.id } });
+  await prisma.vaultFile.update({ where: { id: file.id }, data: { deletedAt: new Date(), deletedById: req.user!.id } });
+  purgeVaultTrash().catch(() => {});
   res.json({ ok: true, usage: await usage(file.userId) });
 });
 
@@ -381,3 +388,12 @@ function randomUUIDv4() {
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
+
+export const VAULT_TRASH_DAYS = Number(process.env.VAULT_TRASH_DAYS || 30);
+/** Permanently remove vault items that have sat in the trash past the retention window. */
+export async function purgeVaultTrash() {
+  const cutoff = new Date(Date.now() - VAULT_TRASH_DAYS * 86400_000);
+  await prisma.vaultFile.deleteMany({ where: { deletedAt: { lt: cutoff } } });
+  await prisma.vaultFolder.deleteMany({ where: { deletedAt: { lt: cutoff }, files: { none: {} } } });
+}
+export { usage as vaultUsage, HttpError as VaultHttpError };

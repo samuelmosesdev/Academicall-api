@@ -31,7 +31,7 @@ export async function markRead(req: Request, res: Response) {
 
   const isStaff = staffRoles.includes(req.user.role);
   const isOwner = notif.userId === req.user.id;
-  if (!isOwner && !isStaff) return res.status(403).json({ error: "Forbidden" });
+  if (!isOwner && !isStaff) return res.status(404).json({ error: "Not found" });
 
   const updated = await prisma.notification.update({
     where: { id: notif.id },

@@ -100,7 +100,13 @@ model User {
   canImportAI             Boolean    @default(true)
   autoPublish             Boolean    @default(false)
   customCourses           Json?
-  createdAt               DateTime   @default(now())
+  /// Add-on duties any user can hold alongside their role: "news", "secretary"
+  staffTags                  String[]     @default([])
+  /// Admin-chosen capability list; null = the defaults for the role and tags
+  permissions                Json?
+  /// Tokens issued before this moment are rejected (force sign-out)
+  sessionsRevokedAt          DateTime?
+  createdAt                  DateTime     @default(now())
   updatedAt               DateTime   @updatedAt
 
   // Relations
@@ -125,6 +131,7 @@ model User {
   newsPosts             NewsPost[]             @relation("NewsAuthor")
   newsComments          NewsComment[]
   newsReactions         NewsReaction[]
+  secretariatRecords    SecretariatRecord[]    @relation("SecretariatAuthor")
 
   @@index([role])
   @@index([department])
@@ -160,10 +167,13 @@ model Document {
   mediumQuestionCount Int @default(0)
   hardQuestionCount Int  @default(0)
   reactions    Json? // { like: number, ... }
-  createdAt    DateTime @default(now())
+  deletedAt           DateTime? // soft delete: recoverable from the Document Center
+  deletedById         String?
+  createdAt            DateTime  @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([uploadedById])
+  @@index([deletedAt])
   @@index([courseId])
   @@index([status])
   @@index([institutionId, department, level])
@@ -781,6 +791,7 @@ model StudyGroupMessage {
   attachmentHeight  Int?
   attachmentDuration Int?
   thumbnailUrl       String?
+  archive            Json? // text + attachment kept on delete so staff can restore
   clientId           String?
   deletedAt          DateTime?
   deletedById        String?
@@ -811,14 +822,16 @@ model VaultAccount {
 }
 
 model VaultFolder {
-  id        String      @id @default(uuid())
-  userId    String
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String
-  color     String      @default("violet")
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  files     VaultFile[]
+  id           String      @id @default(uuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  color        String      @default("violet")
+  deletedAt    DateTime?
+  originalName String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  files        VaultFile[]
 
   @@unique([userId, name])
   @@index([userId])
@@ -826,20 +839,22 @@ model VaultFolder {
 }
 
 model VaultFile {
-  id        String      @id @default(uuid())
-  userId    String
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  folderId  String
-  folder    VaultFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  name      String
-  kind      String // image | pdf
-  mimeType  String
-  size      Int
-  iv        Bytes
-  authTag   Bytes
-  data      Bytes
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id          String      @id @default(uuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folderId    String
+  folder      VaultFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  name        String
+  kind        String // image | pdf
+  mimeType    String
+  size        Int
+  iv          Bytes
+  authTag     Bytes
+  data        Bytes
+  deletedAt   DateTime? // in the user's trash for 30 days; admins can restore
+  deletedById String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
   @@index([userId])
   @@index([folderId, createdAt])
@@ -896,4 +911,30 @@ model NewsReaction {
   @@id([postId, userId])
   @@index([postId, type])
   @@map("news_reactions")
+}
+
+/// Secretariat register: memos, minutes, letters, reports and circulars,
+/// kept by anyone holding the "secretary" duty (and admins).
+model SecretariatRecord {
+  id            String    @id @default(uuid())
+  refNo         String    @unique // ACA/SEC/2026/0001
+  kind          String    @default("memo") // memo | minutes | letter | report | circular | notice | other
+  title         String
+  summary       String?
+  body          String    @default("")
+  status        String    @default("draft") // draft | filed | archived
+  confidential  Boolean   @default(false)
+  tags          String[]  @default([])
+  attachments   Json? // [{ name, url, mime, size }]
+  meetingDate   DateTime?
+  createdById   String?
+  createdBy     User?     @relation("SecretariatAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedByName String?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([kind, status])
+  @@index([createdAt])
+  @@map("secretariat_records")
 }

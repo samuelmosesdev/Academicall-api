@@ -1,7 +1,10 @@
 /**
  * End-to-end API tests against a real PostgreSQL database.
  *
- *   DATABASE_URL=postgresql://... npm run build && node tests/integration.test.mjs
+ * Set ACADEMICALL_TEST_DATABASE=I_CONFIRM_DISPOSABLE and DATABASE_URL to a
+ * dedicated database or isolated PostgreSQL schema whose name includes "test",
+ * then run:
+ *   npm run build && node tests/integration.test.mjs
  *
  * Starts the compiled API (dist/) on port 4100 and a tiny file server on 4199
  * standing in for Cloudinary, then exercises groups, permissions, history rules,
@@ -12,6 +15,19 @@ import { createRequire } from "module";
 import { spawn } from "child_process";
 import http from "http";
 import assert from "assert/strict";
+
+const databaseUrl = process.env.DATABASE_URL;
+if (process.env.ACADEMICALL_TEST_DATABASE !== "I_CONFIRM_DISPOSABLE") {
+  throw new Error("Integration tests require ACADEMICALL_TEST_DATABASE=I_CONFIRM_DISPOSABLE.");
+}
+if (!databaseUrl) {
+  throw new Error("Integration tests require DATABASE_URL for a dedicated disposable database.");
+}
+const databaseName = decodeURIComponent(new URL(databaseUrl).pathname.slice(1));
+const databaseSchema = new URL(databaseUrl).searchParams.get("schema");
+if (!/(^|[_-])test([_-]|$)/i.test(databaseName) && !/(^|[_-])test([_-]|$)/i.test(databaseSchema || "")) {
+  throw new Error("Refusing integration tests: database or isolated schema name must clearly include 'test'.");
+}
 
 const require = createRequire(import.meta.url);
 const { PrismaClient } = require("@prisma/client");
@@ -64,7 +80,7 @@ async function test(name, fn) {
     console.log(`  ✓ ${name}`);
   } catch (err) {
     results.push({ name, ok: false, err });
-    console.log(`  ✗ ${name}\n      ${err.message}`);
+    console.log(`  ✗ ${name}\n      ${err.message}\n${(err.stack || "").split("\n").find((l) => l.includes("integration.test")) || ""}`);
   }
 }
 
@@ -159,6 +175,32 @@ async function main() {
       assert.ok(otherTree.faculties.length > 0);
       assert.equal(otherTree.derivedDepartments, true);
     });
+    console.log("\nNotifications");
+    await test("notification listing and read state are isolated to the owning user", async () => {
+      const owner = await makeUser();
+      const otherUser = await makeUser();
+      const created = await call(owner.token, "POST", "/notifications", {
+        userId: owner.id,
+        title: "Integration notification",
+        body: "Unread test notification",
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.data));
+      const notificationId = created.data.notification.id;
+
+      const ownerList = await call(owner.token, "GET", "/notifications");
+      const otherList = await call(otherUser.token, "GET", "/notifications");
+      assert.ok(ownerList.data.notifications.some((item) => item.id === notificationId));
+      assert.ok(!otherList.data.notifications.some((item) => item.id === notificationId));
+      assert.equal((await call(otherUser.token, "PATCH", `/notifications/${notificationId}/read`)).status, 404);
+
+      const marked = await call(owner.token, "PATCH", `/notifications/${notificationId}/read`);
+      assert.equal(marked.status, 200, JSON.stringify(marked.data));
+      assert.equal(marked.data.notification.readByUser, true);
+      const persisted = await prisma.notification.findUnique({ where: { id: notificationId } });
+      assert.equal(persisted.readByUser, true);
+      assert.ok(persisted.readAt);
+    });
+
     await test("profile update validates the hierarchy top-down", async () => {
       const u = await makeUser({ institutionId: null });
       const f = otherTree.faculties[0], d = f.departments[0], p = d.programs[0];
@@ -244,9 +286,10 @@ async function main() {
       stream.close();
     });
     await test("comments push live to classmates and stay inside the institution", async () => {
-      const a = await makeUser(); const b = await makeUser();
+      const a = await makeUser({ role: "courseRep", courseRepMeta: { program: "Computer Science", level: "300 Level" } });
+      const b = await makeUser();
       const outsider = await makeUser({ institutionId: other.id });
-      const post = await call(a.token, "POST", "/feed/course", { title: "Test", body: "Hello", department: "Computer Science", level: "300 Level" });
+      const post = await call(a.token, "POST", "/feed/course", { title: "Test", body: "Hello", program: "Computer Science", level: "300 Level" });
       assert.equal(post.status, 201);
       assert.equal(post.data.post.institutionId, "uofa");
       const sb = listen(b.token); await sb.ready;
@@ -264,7 +307,7 @@ async function main() {
       const globalStaff = await makeUser({ role: "alphaAgent" });
       const agent = await makeUser({ role: "agent" });
       const foreignPost = await call(globalStaff.token, "POST", "/feed/course", {
-        title: "Foreign institution post", department: "Computer Science", level: "300 Level", institutionId: other.id,
+        title: "Foreign institution post", program: "Computer Science", level: "300 Level", institutionId: other.id,
       });
       assert.equal(foreignPost.status, 201);
       const foreignEvent = await call(globalStaff.token, "POST", "/class-events", {
@@ -278,7 +321,7 @@ async function main() {
       const events = await call(agent.token, "GET", `/class-events?institutionId=${other.id}&program=Computer%20Science`);
       assert.ok(!events.data.events.some((event) => event.id === foreignEvent.data.event.id));
       assert.equal((await call(agent.token, "POST", "/feed/course", {
-        title: "Wrong tenant", department: "Computer Science", institutionId: other.id,
+        title: "Wrong tenant", program: "Computer Science", institutionId: other.id,
       })).status, 403);
       assert.equal((await call(agent.token, "PATCH", `/feed/course/${foreignPost.data.post.id}`, { title: "Changed" })).status, 403);
       assert.equal((await call(agent.token, "DELETE", `/feed/course/${foreignPost.data.post.id}`)).status, 403);
@@ -286,7 +329,7 @@ async function main() {
       assert.equal((await call(agent.token, "DELETE", `/class-events/${foreignEvent.data.event.id}`)).status, 403);
 
       const ownPost = await call(globalStaff.token, "POST", "/feed/course", {
-        title: "Local institution post", department: "Computer Science", level: "300 Level", institutionId: "uofa",
+        title: "Local institution post", program: "Computer Science", level: "300 Level", institutionId: "uofa",
         comments: [{ id: "forged", text: "Injected" }], reactions: [{ uid: "forged", type: "love" }],
       });
       assert.equal(ownPost.status, 201);
@@ -308,8 +351,8 @@ async function main() {
       assert.equal(eventRow.comments.length, 1);
     });
     await test("simultaneous comments are all kept (no lost updates)", async () => {
-      const a = await makeUser();
-      const post = await call(a.token, "POST", "/feed/course", { title: "Race", department: "Computer Science", level: "300 Level" });
+      const a = await makeUser({ role: "courseRep", courseRepMeta: { program: "Computer Science", level: "300 Level" } });
+      const post = await call(a.token, "POST", "/feed/course", { title: "Race", program: "Computer Science", level: "300 Level" });
       const users = await Promise.all(Array.from({ length: 8 }, () => makeUser()));
       await Promise.all(users.map((u, i) => call(u.token, "POST", `/feed/course/${post.data.post.id}/comments`, { text: `c${i}` })));
       const row = await prisma.feedPost.findUnique({ where: { id: post.data.post.id } });
@@ -503,10 +546,362 @@ async function main() {
       // a rep has no power over someone else's group
       assert.equal((await call(rep.token, "GET", `/groups/${group.id}/messages`)).status, 403);
     });
+
+    // ── Academicall Vault ───────────────────────────────────────────────────
+    console.log("\nAcademicall Vault");
+    const vUser = await makeUser();
+    const vOther = await makeUser();
+    const vcall = (u, vt, method, path, body) => fetch(API + path, {
+      method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${u.token}`, ...(vt ? { "X-Vault-Token": vt } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(async (r) => ({ status: r.status, data: await r.json().catch(() => ({})) }));
+    const upload = (u, vt, folderId, buf, name) => fetch(`${API}/vault/folders/${folderId}/files`, {
+      method: "POST", headers: { Authorization: `Bearer ${u.token}`, "X-Vault-Token": vt, "X-File-Name": encodeURIComponent(name), "Content-Type": "application/octet-stream" }, body: buf,
+    }).then(async (r) => ({ status: r.status, data: await r.json().catch(() => ({})) }));
+    let vt = "";
+    let vFolder = null;
+
+    await test("vault: weak PINs are refused; a strong PIN creates the vault once", async () => {
+      assert.equal((await call(vUser.token, "GET", "/vault/status")).data.hasPin, false);
+      assert.equal((await call(vUser.token, "POST", "/vault/pin", { pin: "123456" })).status, 400);
+      assert.equal((await call(vUser.token, "POST", "/vault/pin", { pin: "12345" })).status, 400);
+      const ok = await call(vUser.token, "POST", "/vault/pin", { pin: "482913" });
+      assert.equal(ok.status, 201);
+      assert.ok(ok.data.vaultToken);
+      vt = ok.data.vaultToken;
+      assert.equal((await call(vUser.token, "POST", "/vault/pin", { pin: "759201" })).status, 409);
+      const row = await prisma.vaultAccount.findUnique({ where: { userId: vUser.id } });
+      assert.ok(row.pinHash.startsWith("$2"), "PIN is stored as a bcrypt hash");
+    });
+
+    await test("vault: contents need a vault token, not just a login", async () => {
+      assert.equal((await vcall(vUser, null, "GET", "/vault/folders")).status, 401);
+      assert.equal((await vcall(vUser, "garbage", "GET", "/vault/folders")).status, 401);
+      assert.equal((await vcall(vOther, vt, "GET", "/vault/folders")).status, 401, "a token is bound to its owner");
+      assert.equal((await vcall(vUser, vt, "GET", "/vault/folders")).status, 200);
+    });
+
+    await test("vault: folders hold only images and PDFs, encrypted at rest, private to the owner", async () => {
+      const f = await vcall(vUser, vt, "POST", "/vault/folders", { name: "Certificates", color: "lemon" });
+      assert.equal(f.status, 201);
+      vFolder = f.data.folder;
+      assert.equal((await vcall(vUser, vt, "POST", "/vault/folders", { name: "certificates" })).status, 409);
+      const doc = pdf(60_000);
+      const up = await upload(vUser, vt, vFolder.id, doc, "WAEC result.pdf");
+      assert.equal(up.status, 201, JSON.stringify(up.data));
+      assert.equal(up.data.file.kind, "pdf");
+      assert.equal((await upload(vUser, vt, vFolder.id, png, "passport.png")).data.file.kind, "image");
+      assert.equal((await upload(vUser, vt, vFolder.id, Buffer.from("<html><script>x</script></html>".padEnd(200)), "page.pdf")).status, 415, "sniffs bytes, not the name");
+      assert.equal((await upload(vUser, vt, vFolder.id, pdf(6 * 1024 * 1024), "big.pdf")).status, 413);
+      const row = await prisma.vaultFile.findUnique({ where: { id: up.data.file.id } });
+      assert.ok(!Buffer.from(row.data).includes(Buffer.from("%PDF")), "bytes are encrypted in the database");
+      const res = await fetch(`${API}/vault/files/${up.data.file.id}/content`, { headers: { Authorization: `Bearer ${vUser.token}`, "X-Vault-Token": vt } });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get("content-type"), "application/pdf");
+      assert.match(res.headers.get("cache-control"), /no-store/);
+      assert.ok(Buffer.from(await res.arrayBuffer()).equals(doc), "decrypts back to the original");
+      // another student with their own unlocked vault still can't reach it
+      const ot = (await call(vOther.token, "POST", "/vault/pin", { pin: "306158" })).data.vaultToken;
+      const peek = await fetch(`${API}/vault/files/${up.data.file.id}/content`, { headers: { Authorization: `Bearer ${vOther.token}`, "X-Vault-Token": ot } });
+      assert.equal(peek.status, 404);
+      assert.equal((await vcall(vOther, ot, "GET", `/vault/folders/${vFolder.id}/files`)).status, 404);
+      const list = await vcall(vUser, vt, "GET", "/vault/folders");
+      assert.equal(list.data.folders[0].fileCount, 2);
+      assert.ok(list.data.usage.bytes > 60_000);
+    });
+
+    await test("vault: 5 wrong PINs lock it; the email code resets the PIN and revokes old tokens", async () => {
+      for (let i = 0; i < 4; i += 1) {
+        const r = await call(vUser.token, "POST", "/vault/unlock", { pin: "000001" });
+        assert.equal(r.status, 401);
+        assert.equal(r.data.attemptsLeft, 4 - i);
+      }
+      assert.equal((await call(vUser.token, "POST", "/vault/unlock", { pin: "000001" })).status, 423);
+      assert.equal((await call(vUser.token, "POST", "/vault/unlock", { pin: "482913" })).status, 423, "even the right PIN waits out the lock");
+      const sent = await call(vUser.token, "POST", "/vault/recovery/send");
+      assert.equal(sent.status, 200);
+      assert.match(sent.data.sentTo, /•••@test\.academicall$/);
+      assert.equal((await call(vUser.token, "POST", "/vault/recovery/send")).status, 429, "cooldown between codes");
+      assert.equal((await call(vUser.token, "POST", "/vault/recovery/reset", { code: "000000", newPin: "905172" })).status, 400);
+      const reset = await call(vUser.token, "POST", "/vault/recovery/reset", { code: sent.data.devCode, newPin: "905172" });
+      assert.equal(reset.status, 200);
+      assert.equal((await vcall(vUser, vt, "GET", "/vault/folders")).status, 401, "old vault token revoked");
+      assert.equal((await call(vUser.token, "POST", "/vault/recovery/reset", { code: sent.data.devCode, newPin: "905173" })).status, 400, "codes are single-use");
+      const un = await call(vUser.token, "POST", "/vault/unlock", { pin: "905172" });
+      assert.equal(un.status, 200);
+      assert.equal((await vcall(vUser, un.data.vaultToken, "GET", "/vault/folders")).data.folders.length, 1, "files survive a PIN reset");
+      vt = un.data.vaultToken;
+    });
+
+    await test("vault: deleting a folder moves it and its files to the trash", async () => {
+      assert.equal((await vcall(vUser, vt, "DELETE", `/vault/folders/${vFolder.id}`)).status, 200);
+      assert.equal(await prisma.vaultFile.count({ where: { userId: vUser.id, deletedAt: null } }), 0);
+      assert.equal(await prisma.vaultFile.count({ where: { userId: vUser.id, deletedAt: { not: null } } }), 2, "kept for recovery");
+      const after = await vcall(vUser, vt, "GET", "/vault/folders");
+      assert.equal(after.data.folders.length, 0);
+      assert.equal(after.data.usage.bytes, 0, "trash doesn't count against the quota");
+      assert.equal((await vcall(vUser, vt, "POST", "/vault/folders", { name: "Certificates" })).status, 201, "the name is free again");
+    });
+
+    // ── Academicall News ────────────────────────────────────────────────────
+    console.log("\nAcademicall News");
+    const admin = await makeUser({ role: "admin" });
+    const reporter = await makeUser({ name: "Ada News" });
+    const reader = await makeUser({ name: "Tobi Reader" });
+    const longBody = [
+      "The University of Abuja has released the second-semester examination timetable, with papers starting on Monday across all faculties.",
+      "Students are advised to confirm venues on the faculty notice boards, as several large courses have been split across two halls this session.",
+      "## What changes this time",
+      "For the first time, continuous assessment scores will be visible on the student portal a week before exams begin, according to the registry.",
+      "> We want no surprises on results day, the registrar said.",
+      "Course representatives will share the final schedule with their classes on Academicall as soon as each faculty confirms it.",
+    ].join("\n\n");
+    let story = null;
+
+    await test("news: an admin gives the News duty; only people with it can write", async () => {
+      assert.equal((await call(reporter.token, "POST", "/news/desk/posts", { title: "Exam timetable is out", body: longBody })).status, 403);
+      const r = await call(admin.token, "PUT", `/users/${reporter.id}/access`, { tags: { news: true } });
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      const row = await prisma.user.findUnique({ where: { id: reporter.id } });
+      assert.equal(row.role, "user", "keeps their own role");
+      assert.deepEqual(row.staffTags, ["news"]);
+      const draft = await call(reporter.token, "POST", "/news/desk/posts", { title: "Second-semester exam timetable is out", body: longBody, category: "Exams" });
+      assert.equal(draft.status, 201, JSON.stringify(draft.data));
+      story = draft.data.post;
+      assert.equal(story.status, "draft");
+      assert.equal((await call(null, "GET", `/news/${story.slug}`)).status, 404, "drafts aren't public");
+      assert.ok(!(await call(null, "GET", "/news")).data.posts.some((p) => p.id === story.id));
+      assert.equal((await call(reader.token, "PATCH", `/news/desk/posts/${story.id}`, { status: "published" })).status, 403);
+      const pub = await call(reporter.token, "PATCH", `/news/desk/posts/${story.id}`, { status: "published" });
+      assert.equal(pub.data.post.status, "published");
+      assert.ok(pub.data.post.publishedAt);
+    });
+
+    await test("news: guests read a preview behind a sign-in gate; members read it all", async () => {
+      const list = await call(null, "GET", "/news?category=Exams");
+      assert.equal(list.status, 200);
+      assert.ok(list.data.posts.some((p) => p.id === story.id));
+      assert.equal(list.data.viewer.signedIn, false);
+      const guest = await call(null, "GET", `/news/${story.slug}`);
+      assert.equal(guest.data.post.gated, true);
+      assert.ok(guest.data.post.body.length < longBody.length / 2, "guest sees only the opening");
+      assert.ok(longBody.startsWith(guest.data.post.body));
+      const member = await call(reader.token, "GET", `/news/${story.slug}`);
+      assert.equal(member.data.post.gated, false);
+      assert.equal(member.data.post.body, longBody);
+    });
+
+    await test("news: signed-in readers react and comment; guests can't", async () => {
+      assert.equal((await call(null, "POST", `/news/${story.id}/comments`, { body: "hi" })).status, 401);
+      assert.equal((await call(null, "POST", `/news/${story.id}/reactions`, { type: "love" })).status, 401);
+      const c = await call(reader.token, "POST", `/news/${story.id}/comments`, { body: "Thanks for the heads up!" });
+      assert.equal(c.status, 201);
+      await call(reporter.token, "POST", `/news/${story.id}/comments`, { body: "Venues update tomorrow." });
+      await call(admin.token, "POST", `/news/${story.id}/comments`, { body: "Good luck everyone." });
+      assert.equal((await call(reader.token, "POST", `/news/${story.id}/reactions`, { type: "love" })).data.reactions.love, 1);
+      const sw = await call(reader.token, "POST", `/news/${story.id}/reactions`, { type: "fire" });
+      assert.deepEqual(sw.data.reactions, { fire: 1 }, "one reaction per reader");
+      assert.equal(sw.data.myReaction, "fire");
+      assert.equal((await call(reader.token, "POST", `/news/${story.id}/reactions`, { type: null })).data.reactionTotal, 0);
+      const g = await call(null, "GET", `/news/${story.id}/comments`);
+      assert.equal(g.data.gated, true);
+      assert.equal(g.data.total, 3);
+      assert.ok(g.data.comments.length <= 2);
+      const m = await call(reader.token, "GET", `/news/${story.id}/comments`);
+      assert.equal(m.data.comments.length, 3);
+      // readers delete only their own; the news team moderates
+      const others = m.data.comments.find((x) => !x.mine);
+      assert.equal((await call(reader.token, "DELETE", `/news/comments/${others.id}`)).status, 403);
+      assert.equal((await call(reporter.token, "DELETE", `/news/comments/${c.data.comment.id}`)).status, 200);
+      assert.equal((await call(null, "GET", `/news/${story.slug}`)).data.post.commentCount, 2);
+    });
+
+    await test("news: agents edit only their own stories; admins can edit any", async () => {
+      const other = await makeUser({ staffTags: ["news"] });
+      assert.equal((await call(other.token, "PATCH", `/news/desk/posts/${story.id}`, { title: "Hijacked headline here" })).status, 403);
+      assert.equal((await call(admin.token, "PATCH", `/news/desk/posts/${story.id}`, { title: "Second-semester exam timetable released" })).status, 200);
+      assert.equal((await call(other.token, "GET", "/news/desk/posts")).data.posts.length, 0);
+    });
+
+    // ── staff access, Document Center, Secretariat ─────────────────────────
+    console.log("\nStaff access");
+    const alpha = await makeUser({ role: "alphaAgent", name: "Alpha One" });
+    const beta = await makeUser({ role: "agent", name: "Beta One" });
+    const student = await makeUser({ name: "Kemi Student" });
+    const rep = await makeUser({ role: "courseRep", name: "Rep Student" });
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const tokenFor = (u) => jwt.sign({ sub: u.id, email: u.email, role: u.role }, SECRET);
+
+    await test("access: /auth/me reports role and duty capabilities", async () => {
+      const a = (await call(admin.token, "GET", "/auth/me")).data.user;
+      assert.ok(a.capabilities.includes("staff.manage") && a.capabilities.includes("vault.recover"));
+      const al = (await call(alpha.token, "GET", "/auth/me")).data.user;
+      assert.ok(al.capabilities.includes("users.password") && al.capabilities.includes("users.news"));
+      assert.ok(!al.capabilities.includes("staff.manage") && !al.capabilities.includes("vault.recover"));
+      const b = (await call(beta.token, "GET", "/auth/me")).data.user;
+      assert.ok(b.capabilities.includes("documents.review"));
+      assert.ok(!b.capabilities.includes("users.password") && !b.capabilities.includes("users.news"));
+      assert.deepEqual((await call(student.token, "GET", "/auth/me")).data.user.capabilities, []);
+    });
+
+    await test("access: Alpha Agents manage duties and lower-ranked staff, not staff roles", async () => {
+      assert.equal((await call(alpha.token, "PATCH", `/users/${student.id}`, { role: "admin" })).status, 403);
+      assert.equal((await call(alpha.token, "PATCH", `/users/${student.id}`, { role: "agent" })).status, 403);
+      assert.equal((await call(alpha.token, "PATCH", `/users/${beta.id}`, { status: "suspended" })).status, 200);
+      assert.equal((await call(alpha.token, "PATCH", `/users/${beta.id}`, { status: "active" })).status, 200);
+      assert.equal((await call(alpha.token, "PATCH", `/users/${admin.id}`, { status: "suspended" })).status, 403);
+      assert.equal((await call(alpha.token, "PUT", `/users/${rep.id}/access`, { tags: { news: true } })).status, 200);
+      const repRow = await prisma.user.findUnique({ where: { id: rep.id } });
+      assert.equal(repRow.role, "courseRep");
+      assert.deepEqual(repRow.staffTags, ["news"]);
+      assert.equal((await call(alpha.token, "PUT", `/users/${student.id}/access`, { tags: { secretary: true } })).status, 403);
+      assert.equal((await call(alpha.token, "PUT", `/users/${beta.id}/access`, { permissions: ["documents.review"] })).status, 403);
+      assert.equal((await call(beta.token, "PUT", `/users/${student.id}/access`, { tags: { news: true } })).status, 403);
+    });
+
+    await test("requests: only reviewers can see other users' requests", async () => {
+      const ownRequest = await prisma.request.create({ data: { requesterUid: student.id, title: "My request" } });
+      await prisma.request.create({ data: { requesterUid: rep.id, title: "Another request" } });
+      const ownChange = await prisma.profileChangeRequest.create({ data: { userId: student.id, field: "name", requestedValue: "Kemi Student" } });
+      await prisma.profileChangeRequest.create({ data: { userId: rep.id, field: "name", requestedValue: "Rep Student" } });
+      const ownRequests = await call(student.token, "GET", "/requests");
+      assert.deepEqual(ownRequests.data.requests.map((r) => r.id), [ownRequest.id]);
+      const ownChanges = await call(student.token, "GET", "/profile-change-requests");
+      assert.deepEqual(ownChanges.data.requests.map((r) => r.id), [ownChange.id]);
+      const staffRequests = await call(beta.token, "GET", "/requests");
+      assert.ok(staffRequests.data.requests.some((r) => r.id === ownRequest.id));
+      assert.ok(staffRequests.data.requests.some((r) => r.requesterUid === rep.id));
+      const staffChanges = await call(beta.token, "GET", "/profile-change-requests");
+      assert.ok(staffChanges.data.requests.some((r) => r.id === ownChange.id));
+      assert.ok(staffChanges.data.requests.some((r) => r.userId === rep.id));
+    });
+
+    await test("access: admins can narrow and restore an agent's capabilities", async () => {
+      const doc = await prisma.document.create({ data: { title: "Pending notes", uploadedById: student.id, status: "pending" } });
+      const narrowed = await call(admin.token, "PUT", `/users/${beta.id}/access`, { permissions: ["courses.manage", "users.password"] });
+      assert.equal(narrowed.status, 200, JSON.stringify(narrowed.data));
+      assert.deepEqual(narrowed.data.user.capabilities.sort(), ["courses.manage", "users.password"]);
+      assert.equal((await call(beta.token, "POST", `/documents/${doc.id}/approve`, {})).status, 403);
+      assert.equal((await call(beta.token, "POST", "/questions/from-material", {})).status, 403);
+      assert.equal((await call(beta.token, "GET", "/users")).status, 403);
+      assert.equal((await call(admin.token, "PUT", `/users/${beta.id}/access`, { permissions: ["staff.manage"] })).status, 400);
+      assert.equal((await call(admin.token, "PUT", `/users/${beta.id}/access`, { permissions: null })).status, 200);
+      assert.equal((await call(beta.token, "POST", `/documents/${doc.id}/approve`, {})).status, 200);
+      const staff = await call(admin.token, "GET", "/access/staff");
+      assert.ok(staff.data.people.some((p) => p.id === rep.id && p.staffTags.includes("news")));
+    });
+
+    await test("password: forced changes revoke old sessions and allow admin reset", async () => {
+      const victim = await makeUser({ name: "Forgetful Student" });
+      await sleep(1100);
+      assert.equal((await call(beta.token, "POST", `/users/${victim.id}/force-password-change`)).status, 403);
+      assert.equal((await call(alpha.token, "POST", `/users/${admin.id}/force-password-change`)).status, 403);
+      assert.equal((await call(alpha.token, "POST", `/users/${victim.id}/force-password-change`)).status, 200);
+      const old = await call(victim.token, "GET", "/courses");
+      assert.equal(old.status, 401);
+      assert.equal(old.data.code, "session_revoked");
+      await sleep(1100);
+      const fresh = tokenFor(victim);
+      const blocked = await call(fresh, "GET", "/courses");
+      assert.equal(blocked.status, 403);
+      assert.equal(blocked.data.code, "password_change_required");
+      const me = await call(fresh, "GET", "/auth/me");
+      assert.equal(me.status, 200);
+      assert.equal(me.data.user.mustChangePassword, true);
+      const temp = await call(admin.token, "POST", `/users/${victim.id}/reset-password`);
+      assert.equal(temp.status, 200);
+      assert.ok(temp.data.tempPassword.length >= 12);
+      assert.ok(await prisma.activityLog.findFirst({ where: { action: "user.force_password_change", reference: victim.id } }));
+    });
+
+    console.log("\nDocument Center");
+    await test("documents: staff can find and restore deleted materials", async () => {
+      const doc = await prisma.document.create({ data: { title: "MTH 201 past questions", uploadedById: student.id, status: "approved" } });
+      assert.equal((await call(student.token, "DELETE", `/documents/${doc.id}`)).status, 204);
+      assert.equal((await call(student.token, "GET", `/documents/${doc.id}`)).status, 404);
+      assert.ok(!(await call(admin.token, "GET", "/documents")).data.documents.some((d) => d.id === doc.id));
+      assert.equal((await call(student.token, "GET", "/files/materials?state=deleted")).status, 403);
+      const bin = await call(admin.token, "GET", "/files/materials?state=deleted&q=MTH%20201");
+      const deleted = bin.data.materials.find((d) => d.id === doc.id);
+      assert.ok(deleted);
+      assert.equal(deleted.deletedBy, student.name);
+      assert.equal((await call(admin.token, "POST", `/files/materials/${doc.id}/restore`)).status, 200);
+      assert.equal((await call(student.token, "GET", `/documents/${doc.id}`)).status, 200);
+    });
+
+    await test("documents: owners cannot approve their own uploads by editing them", async () => {
+      const doc = await prisma.document.create({ data: { title: "Sneaky upload", uploadedById: student.id, status: "pending" } });
+      const result = await call(student.token, "PATCH", `/documents/${doc.id}`, { status: "approved", title: "Sneaky upload v2" });
+      assert.equal(result.status, 403);
+      const row = await prisma.document.findUnique({ where: { id: doc.id } });
+      assert.equal(row.status, "pending");
+      assert.equal(row.title, "Sneaky upload");
+    });
+
+    await test("vault recovery: admins restore files; opening requires a reason and notifies the owner", async () => {
+      assert.equal((await call(beta.token, "GET", "/files/vault")).status, 403);
+      const users = await call(admin.token, "GET", `/files/vault?q=${encodeURIComponent(vUser.email)}`);
+      const mine = users.data.users.find((u) => u.user.id === vUser.id);
+      assert.ok(mine && mine.trash === 2);
+      const detail = await call(admin.token, "GET", `/files/vault/${vUser.id}`);
+      const lost = detail.data.files.find((f) => f.deletedAt && f.kind === "pdf");
+      assert.ok(lost);
+      assert.ok(!("data" in lost));
+      assert.equal((await call(admin.token, "POST", `/files/vault-files/${lost.id}/restore`)).status, 200);
+      const back = await vcall(vUser, vt, "GET", "/vault/folders");
+      assert.ok(back.data.folders.some((f) => f.name.startsWith("Certificates") && f.fileCount === 1));
+      assert.equal((await call(admin.token, "POST", `/files/vault-files/${lost.id}/open`, { reason: "x" })).status, 400);
+      const opened = await fetch(`${API}/files/vault-files/${lost.id}/open`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${admin.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Student requested access to their result" }),
+      });
+      assert.equal(opened.status, 200);
+      assert.equal(Buffer.from(await opened.arrayBuffer()).subarray(0, 5).toString(), "%PDF-");
+      assert.ok(await prisma.notification.findFirst({ where: { userId: vUser.id, title: { contains: "opened a file" } } }));
+      assert.ok(await prisma.activityLog.findFirst({ where: { action: "vault.open", reference: vUser.id } }));
+    });
+
+    console.log("\nSecretariat");
+    await test("secretariat: duty access, record numbering, confidentiality and archive permissions", async () => {
+      const sec = await makeUser({ name: "Sade Secretary" });
+      assert.equal((await call(sec.token, "GET", "/secretariat/overview")).status, 403);
+      assert.equal((await call(admin.token, "PUT", `/users/${sec.id}/access`, { tags: { secretary: true } })).status, 200);
+      const ov = await call(sec.token, "GET", "/secretariat/overview");
+      assert.equal(ov.status, 200, JSON.stringify(ov.data));
+      assert.deepEqual(ov.data.can, { records: true, confidential: false, archive: false, activity: true });
+      const a = await call(sec.token, "POST", "/secretariat/records", { kind: "minutes", title: "Staff meeting, week 6", body: "Attendance: 7.", meetingDate: "2026-10-12", tags: ["Meetings"] });
+      assert.equal(a.status, 201, JSON.stringify(a.data));
+      assert.match(a.data.record.refNo, /^ACA\/SEC\/\d{4}\/\d{4}$/);
+      const b = await call(sec.token, "POST", "/secretariat/records", { kind: "memo", title: "Exam period support rota" });
+      assert.equal(Number(b.data.record.refNo.slice(-4)), Number(a.data.record.refNo.slice(-4)) + 1);
+      assert.equal((await call(sec.token, "POST", "/secretariat/records", { title: "Private note", confidential: true })).status, 403);
+      const conf = await call(admin.token, "POST", "/secretariat/records", { title: "Disciplinary hearing notes", confidential: true });
+      assert.equal(conf.status, 201);
+      const list = await call(sec.token, "GET", "/secretariat/records");
+      assert.ok(!list.data.records.some((r) => r.id === conf.data.record.id));
+      assert.equal((await call(sec.token, "GET", `/secretariat/records/${conf.data.record.id}`)).status, 404);
+      assert.equal((await call(sec.token, "PATCH", `/secretariat/records/${a.data.record.id}`, { status: "filed" })).status, 200);
+      assert.equal((await call(sec.token, "DELETE", `/secretariat/records/${a.data.record.id}`)).status, 403);
+      const journal = await call(sec.token, "GET", "/secretariat/activity?area=secretariat");
+      assert.ok(journal.data.entries.some((e) => e.action === "secretariat.record_create"));
+      assert.ok(!journal.data.entries.some((e) => (e.target || "").includes("Disciplinary")));
+      assert.equal((await call(admin.token, "PUT", `/users/${sec.id}/access`, { permissions: ["secretariat.records", "secretariat.archive", "secretariat.confidential"] })).status, 200);
+      assert.equal((await call(sec.token, "GET", `/secretariat/records/${conf.data.record.id}`)).status, 200);
+      assert.equal((await call(sec.token, "GET", "/secretariat/activity")).status, 403);
+      assert.equal((await call(sec.token, "DELETE", `/secretariat/records/${a.data.record.id}`)).status, 200);
+    });
+
   } finally {
     api.kill();
     fileServer.close();
     await prisma.$executeRawUnsafe(`DELETE FROM "notifications" WHERE "createdById" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM "secretariat_records" WHERE "createdById" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM "documents" WHERE "uploadedById" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM "activity_logs" WHERE "userId" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM "news_posts" WHERE "authorId" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM "requests" WHERE "requesterUid" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM "profile_change_requests" WHERE "userId" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
     await prisma.$executeRawUnsafe(`DELETE FROM "users" WHERE "email" LIKE '%@test.academicall'`).catch((e) => console.error("cleanup", e.message));
     await prisma.$disconnect();
   }

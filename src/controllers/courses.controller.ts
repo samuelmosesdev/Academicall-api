@@ -29,7 +29,7 @@ export async function listCourses(req: Request, res: Response) {
 export async function getCourse(req: Request, res: Response) {
   const course = await prisma.course.findUnique({
     where: { id: String(req.params.id) },
-    include: { documents: { take: 20 } },
+    include: { documents: { where: { deletedAt: null }, take: 20 } },
   });
 
   if (!course) return res.status(404).json({ error: "Course not found" });

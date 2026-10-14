@@ -1,3 +1,4 @@
+import { defaultCaps, effectiveCaps, grantable } from "../lib/access";
 import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -43,6 +44,8 @@ function publicUser(user: {
   phone?: string | null;
   photoUrl?: string | null;
   mustChangePassword?: boolean;
+  staffTags?: string[];
+  permissions?: Prisma.JsonValue | null;
 }) {
   return {
     id: user.id,
@@ -70,6 +73,11 @@ function publicUser(user: {
     phone: user.phone,
     photoUrl: user.photoUrl,
     mustChangePassword: user.mustChangePassword,
+    staffTags: user.staffTags || [],
+    capabilities: effectiveCaps(user),
+    defaultCapabilities: defaultCaps(user),
+    grantableCapabilities: grantable(user),
+    customPermissions: Array.isArray(user.permissions),
   };
 }
 
@@ -465,6 +473,8 @@ export async function me(req: Request, res: Response) {
         phone: true,
         photoUrl: true,
         mustChangePassword: true,
+        staffTags: true,
+        permissions: true,
       },
     });
 
@@ -475,6 +485,10 @@ export async function me(req: Request, res: Response) {
     return res.json({
       user: {
         ...user,
+        capabilities: effectiveCaps(user),
+        defaultCapabilities: defaultCaps(user),
+        grantableCapabilities: grantable(user),
+        customPermissions: Array.isArray(user.permissions),
         profileComplete: Boolean(
           user.profileComplete &&
           (user.role !== "user" && user.role !== "courseRep" || user.program?.trim())

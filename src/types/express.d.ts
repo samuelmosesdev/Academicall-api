@@ -7,6 +7,9 @@ declare global {
         id: string;
         email: string;
         role: Role;
+        name?: string | null;
+        staffTags?: string[];
+        caps?: string[];
       };
     }
   }

@@ -800,7 +800,7 @@ export async function deleteMessage(req: Request, res: Response) {
     if (!msg || msg.groupId !== group.id || msg.deletedAt) throw new HttpError(404, "Message not found");
     if (msg.type === "system") throw new HttpError(400, "System messages can't be deleted");
     if (msg.senderId !== user.id && member.role === "member") throw new HttpError(403, "You can only delete your own messages");
-    await prisma.studyGroupMessage.update({ where: { id: msg.id }, data: { deletedAt: new Date(), deletedById: user.id, text: null, attachmentUrl: null, thumbnailUrl: null } });
+    await prisma.studyGroupMessage.update({ where: { id: msg.id }, data: { deletedAt: new Date(), deletedById: user.id, text: null, attachmentUrl: null, thumbnailUrl: null, archive: { text: msg.text, attachmentUrl: msg.attachmentUrl, thumbnailUrl: msg.thumbnailUrl } } });
     publishToGroup(group.id, { type: "group.message.deleted", data: { groupId: group.id, messageId: msg.id } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) {

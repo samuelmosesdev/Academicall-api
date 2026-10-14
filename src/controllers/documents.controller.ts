@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { publishToScope } from "../lib/realtime";
 import { DEFAULT_INSTITUTION_ID, institutionOf, programmeScopeKey } from "../lib/scope";
+import { hasCap } from "../lib/access";
 
 function isStaff(role?: string) {
   return ["admin", "alphaAgent", "agent"].includes(role || "");
@@ -36,6 +37,7 @@ export async function listDocuments(req: Request, res: Response) {
   const q = req.query.q as string | undefined;
   const status = req.query.status as string | undefined;
   const staff = isStaff(req.user?.role);
+  const canReview = hasCap(req.user, "documents.review") || hasCap(req.user, "documents.manage");
   const requestedInstitution = String(req.query.institutionId || "").trim();
   const globalAccess = hasGlobalInstitutionAccess(req.user.role);
   const requester = globalAccess
@@ -54,6 +56,7 @@ export async function listDocuments(req: Request, res: Response) {
   const institutionId = globalAccess ? requestedInstitution || undefined : requesterInstitution;
   const documents = await prisma.document.findMany({
     where: {
+      deletedAt: null,
       ...(!globalAccess
         ? {
             OR: [
@@ -68,7 +71,7 @@ export async function listDocuments(req: Request, res: Response) {
           : {}),
       ...(courseId ? { courseId } : {}),
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
-      ...(!staff
+      ...(!canReview
         ? {
             status: "approved",
             AND: [{ OR: [{ source: null }, { source: { not: "personal" } }] }],
@@ -90,7 +93,7 @@ export async function listDocuments(req: Request, res: Response) {
 export async function listMyDocuments(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const documents = await prisma.document.findMany({
-    where: { uploadedById: req.user.id, source: "personal" },
+    where: { uploadedById: req.user.id, source: "personal", deletedAt: null },
     include: { course: { select: { id: true, title: true, code: true } } },
     orderBy: { createdAt: "desc" },
     take: 200,
@@ -103,7 +106,7 @@ export async function getDocument(req: Request, res: Response) {
     where: { id: String(req.params.id) },
     include: { uploadedBy: { select: { id: true, name: true, email: true } }, course: true },
   });
-  if (!document) return res.status(404).json({ error: "Document not found" });
+  if (!document || document.deletedAt) return res.status(404).json({ error: "Document not found" });
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const canAccess = await canAccessInstitution(req.user.id, req.user.role, document.institutionId);
   if (!canAccess) {
@@ -112,11 +115,11 @@ export async function getDocument(req: Request, res: Response) {
   if (
     document.source === "personal" &&
     document.uploadedById !== req.user?.id &&
-    !isStaff(req.user?.role)
+    !hasCap(req.user, "documents.manage")
   ) {
     return res.status(404).json({ error: "Document not found" });
   }
-  if (!isStaff(req.user?.role) && document.status !== "approved") {
+  if (!hasCap(req.user, "documents.review") && !hasCap(req.user, "documents.manage") && document.status !== "approved") {
     return res.status(403).json({ error: "Material not yet approved" });
   }
   res.json({ document });
@@ -270,7 +273,7 @@ export async function createDocument(req: Request, res: Response) {
 export async function updateDocument(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const existing = await prisma.document.findUnique({ where: { id: String(req.params.id) } });
-  if (!existing) return res.status(404).json({ error: "Document not found" });
+  if (!existing || existing.deletedAt) return res.status(404).json({ error: "Document not found" });
   if (!(await canAccessInstitution(req.user.id, req.user.role, existing.institutionId))) {
     return res.status(404).json({ error: "Document not found" });
   }
@@ -303,6 +306,12 @@ export async function updateDocument(req: Request, res: Response) {
   } else if (isStaff(req.user.role)) {
     const parsed = createSchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors });
+    if (Object.keys(parsed.data).some((key) => key !== "status") && !hasCap(req.user, "documents.manage")) {
+      return res.status(403).json({ error: "You need the documents.manage permission to edit materials" });
+    }
+    if (parsed.data.status !== undefined && !hasCap(req.user, "documents.review")) {
+      return res.status(403).json({ error: "You need the documents.review permission to change material status" });
+    }
     data = parsed.data;
     if (parsed.data.institutionId) {
       const institution = await prisma.institution.findUnique({
@@ -333,9 +342,9 @@ export async function updateDocument(req: Request, res: Response) {
 
 export async function approveDocument(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
-  if (!isStaff(req.user.role)) return res.status(403).json({ error: "Forbidden" });
+  if (!hasCap(req.user, "documents.review")) return res.status(403).json({ error: "Forbidden" });
   const existing = await prisma.document.findUnique({ where: { id: String(req.params.id) } });
-  if (!existing) return res.status(404).json({ error: "Document not found" });
+  if (!existing || existing.deletedAt) return res.status(404).json({ error: "Document not found" });
   if (!(await canAccessInstitution(req.user.id, req.user.role, existing.institutionId))) {
     return res.status(404).json({ error: "Document not found" });
   }
@@ -352,12 +361,13 @@ export async function approveDocument(req: Request, res: Response) {
 export async function deleteDocument(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   const existing = await prisma.document.findUnique({ where: { id: String(req.params.id) } });
-  if (!existing) return res.status(404).json({ error: "Document not found" });
+  if (!existing || existing.deletedAt) return res.status(404).json({ error: "Document not found" });
   if (!(await canAccessInstitution(req.user.id, req.user.role, existing.institutionId))) {
     return res.status(404).json({ error: "Document not found" });
   }
   if (existing.uploadedById !== req.user.id && !isStaff(req.user.role)) return res.status(403).json({ error: "Forbidden" });
-  await prisma.document.delete({ where: { id: existing.id } });
+  if (existing.uploadedById !== req.user.id && !hasCap(req.user, "documents.manage")) return res.status(403).json({ error: "Forbidden" });
+  await prisma.document.update({ where: { id: existing.id }, data: { deletedAt: new Date(), deletedById: req.user.id } });
   broadcastMaterial(existing, "deleted");
   res.status(204).send();
 }

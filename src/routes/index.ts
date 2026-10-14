@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from "express";
-import { authenticate, requireAdmin, requireStaff, requireAdminOrAlpha } from "../middleware/auth";
+import { authenticate, requireAdmin, requireStaff, requireAdminOrAlpha, requireCap } from "../middleware/auth";
 import * as authCtrl from "../controllers/auth.controller";
 import * as usersCtrl from "../controllers/users.controller";
 import * as docsCtrl from "../controllers/documents.controller";
@@ -20,6 +20,8 @@ import express from "express";
 import * as vaultCtrl from "../controllers/vault.controller";
 import * as newsCtrl from "../controllers/news.controller";
 import departmentRoutes from "./department.routes";
+import * as filesCtrl from "../controllers/files.controller";
+import * as secCtrl from "../controllers/secretariat.controller";
 
 const router = Router();
 const asyncRoute = (handler: RequestHandler): RequestHandler => (req, res, next) => {
@@ -95,13 +97,40 @@ router.post("/auth/verification/verify", authenticate, authCtrl.verifyEmail);
 // Users
 router.get("/users/me", authenticate, authCtrl.me);
 router.patch("/users/me", authenticate, usersCtrl.updateMe);
-router.get("/users", authenticate, requireStaff, usersCtrl.listUsers);
+router.get("/users", authenticate, requireCap("users.view"), usersCtrl.listUsers);
 router.get("/users/course-rep-status", authenticate, usersCtrl.courseRepStatus);
-router.post("/users/agents", authenticate, requireAdmin, usersCtrl.createAgent);
-router.get("/users/:id", authenticate, requireStaff, usersCtrl.getUser);
-router.patch("/users/:id", authenticate, requireAdminOrAlpha, usersCtrl.adminUpdateUser);
-router.post("/users/:id/reset-password", authenticate, requireAdmin, usersCtrl.adminResetPassword);
-router.delete("/users/:id", authenticate, requireAdmin, usersCtrl.deleteUser);
+router.post("/users/agents", authenticate, requireCap("staff.manage"), usersCtrl.createAgent);
+router.get("/users/:id", authenticate, requireCap("users.view"), usersCtrl.getUser);
+router.patch("/users/:id", authenticate, requireStaff, usersCtrl.adminUpdateUser);
+router.put("/users/:id/access", authenticate, requireStaff, usersCtrl.updateAccess);
+router.post("/users/:id/reset-password", authenticate, requireCap("users.password"), usersCtrl.adminResetPassword);
+router.post("/users/:id/force-password-change", authenticate, requireCap("users.password"), usersCtrl.forcePasswordChange);
+router.post("/users/:id/sign-out", authenticate, requireCap("users.password"), usersCtrl.revokeSessions);
+router.delete("/users/:id", authenticate, requireCap("users.delete"), usersCtrl.deleteUser);
+router.get("/access/catalog", authenticate, requireStaff, usersCtrl.accessCatalog);
+router.get("/access/staff", authenticate, requireCap("staff.manage", "users.view"), usersCtrl.listStaffAccess);
+
+// Document Center
+router.get("/files/summary", authenticate, requireCap("files.center"), filesCtrl.summary);
+router.get("/files/materials", authenticate, requireCap("files.center"), filesCtrl.listMaterials);
+router.post("/files/materials/:id/restore", authenticate, requireCap("files.center"), requireCap("documents.manage"), filesCtrl.restoreMaterial);
+router.post("/files/materials/:id/status", authenticate, requireCap("files.center"), requireCap("documents.review"), filesCtrl.setMaterialStatus);
+router.delete("/files/materials/:id", authenticate, requireCap("files.center"), requireCap("documents.manage"), filesCtrl.removeMaterial);
+router.get("/files/group", authenticate, requireCap("files.center"), filesCtrl.listGroupFiles);
+router.post("/files/group/:id/restore", authenticate, requireCap("files.center"), filesCtrl.restoreGroupFile);
+router.get("/files/vault", authenticate, requireCap("vault.recover"), filesCtrl.vaultUsers);
+router.get("/files/vault/:userId", authenticate, requireCap("vault.recover"), filesCtrl.vaultUserFiles);
+router.post("/files/vault/:userId/unlock", authenticate, requireCap("vault.recover"), filesCtrl.unlockVault);
+router.post("/files/vault-files/:id/restore", authenticate, requireCap("vault.recover"), filesCtrl.restoreVaultFile);
+router.post("/files/vault-files/:id/open", authenticate, requireCap("vault.recover"), filesCtrl.openVaultFile);
+
+router.get("/secretariat/overview", authenticate, secCtrl.requireSecretariat, secCtrl.overview);
+router.get("/secretariat/records", authenticate, secCtrl.requireSecretariat, secCtrl.listRecords);
+router.post("/secretariat/records", authenticate, secCtrl.requireSecretariat, secCtrl.createRecord);
+router.get("/secretariat/records/:id", authenticate, secCtrl.requireSecretariat, secCtrl.getRecord);
+router.patch("/secretariat/records/:id", authenticate, secCtrl.requireSecretariat, secCtrl.updateRecord);
+router.delete("/secretariat/records/:id", authenticate, secCtrl.requireSecretariat, secCtrl.deleteRecord);
+router.get("/secretariat/activity", authenticate, secCtrl.requireSecretariat, secCtrl.activityJournal);
 
 // Documents
 router.get("/documents/mine", authenticate, docsCtrl.listMyDocuments);
@@ -109,40 +138,40 @@ router.get("/documents", authenticate, docsCtrl.listDocuments);
 router.get("/documents/:id", authenticate, docsCtrl.getDocument);
 router.post("/documents", authenticate, docsCtrl.createDocument);
 router.patch("/documents/:id", authenticate, docsCtrl.updateDocument);
-router.post("/documents/:id/approve", authenticate, requireStaff, docsCtrl.approveDocument);
+router.post("/documents/:id/approve", authenticate, requireCap("documents.review"), docsCtrl.approveDocument);
 router.delete("/documents/:id", authenticate, docsCtrl.deleteDocument);
 
 // Announcements and approval requests
 router.get("/announcements", authenticate, announcementsCtrl.listAnnouncements);
 router.get("/announcements/reads", authenticate, announcementsCtrl.listAnnouncementReads);
 router.post("/announcements/:id/read", authenticate, announcementsCtrl.markAnnouncementRead);
-router.post("/announcements", authenticate, announcementsCtrl.createAnnouncement);
-router.patch("/announcements/:id", authenticate, requireStaff, announcementsCtrl.updateAnnouncement);
-router.delete("/announcements/:id", authenticate, requireStaff, announcementsCtrl.deleteAnnouncement);
+router.post("/announcements", authenticate, requireCap("announcements.publish"), announcementsCtrl.createAnnouncement);
+router.patch("/announcements/:id", authenticate, requireCap("announcements.publish"), announcementsCtrl.updateAnnouncement);
+router.delete("/announcements/:id", authenticate, requireCap("announcements.publish"), announcementsCtrl.deleteAnnouncement);
 router.get("/requests", authenticate, requestsCtrl.listRequests);
 router.post("/requests", authenticate, requestsCtrl.createRequest);
-router.patch("/requests/:id", authenticate, requireStaff, requestsCtrl.updateRequest);
+router.patch("/requests/:id", authenticate, requireCap("requests.review"), requestsCtrl.updateRequest);
 router.get("/profile-change-requests", authenticate, requestsCtrl.listProfileChangeRequests);
 router.post("/profile-change-requests", authenticate, requestsCtrl.createProfileChangeRequest);
-router.patch("/profile-change-requests/:id", authenticate, requireStaff, requestsCtrl.updateProfileChangeRequest);
-router.delete("/profile-change-requests/:id", authenticate, requireStaff, requestsCtrl.deleteProfileChangeRequest);
+router.patch("/profile-change-requests/:id", authenticate, requireCap("requests.review"), requestsCtrl.updateProfileChangeRequest);
+router.delete("/profile-change-requests/:id", authenticate, requireCap("requests.review"), requestsCtrl.deleteProfileChangeRequest);
 
 // Courses
 router.get("/courses", authenticate, coursesCtrl.listCourses);
 router.get("/courses/:id", authenticate, coursesCtrl.getCourse);
-router.post("/courses", authenticate, coursesCtrl.createCourse);
+router.post("/courses", authenticate, requireCap("courses.manage"), coursesCtrl.createCourse);
 router.get("/enrollments", authenticate, enrollmentsCtrl.listEnrollments);
 router.post("/enrollments", authenticate, enrollmentsCtrl.createEnrollment);
 router.patch("/enrollments/:id", authenticate, enrollmentsCtrl.updateEnrollment);
 router.delete("/enrollments/:id", authenticate, enrollmentsCtrl.deleteEnrollment);
-router.get("/activity", authenticate, requireStaff, activityCtrl.listActivity);
+router.get("/activity", authenticate, requireCap("activity.view"), activityCtrl.listActivity);
 router.post("/activity", authenticate, activityCtrl.createActivity);
-router.post("/activity/:id/revert", authenticate, requireAdminOrAlpha, activityCtrl.revertActivity);
+router.post("/activity/:id/revert", authenticate, requireAdminOrAlpha, requireCap("activity.view"), activityCtrl.revertActivity);
 router.get("/questions", authenticate, featureCtrl.listQuestions);
-router.post("/questions", authenticate, requireStaff, featureCtrl.createQuestion);
-router.post("/questions/from-material", authenticate, featureCtrl.createQuestionFromMaterial);
-router.patch("/questions/:id", authenticate, requireStaff, featureCtrl.updateQuestion);
-router.delete("/questions/:id", authenticate, requireStaff, featureCtrl.deleteQuestion);
+router.post("/questions", authenticate, requireCap("cbt.manage"), featureCtrl.createQuestion);
+router.post("/questions/from-material", authenticate, requireCap("cbt.manage"), featureCtrl.createQuestionFromMaterial);
+router.patch("/questions/:id", authenticate, requireCap("cbt.manage"), featureCtrl.updateQuestion);
+router.delete("/questions/:id", authenticate, requireCap("cbt.manage"), featureCtrl.deleteQuestion);
 router.get("/quizzes/mine", authenticate, quizzesCtrl.listMine);
 router.get("/quizzes", authenticate, quizzesCtrl.listByMaterial);
 router.post("/quizzes", authenticate, quizzesCtrl.createQuiz);
@@ -163,7 +192,7 @@ router.post("/class-events/:id/comments/:commentId/reactions", authenticate, cla
 router.get("/feed/:kind", authenticate, featureCtrl.listFeedPosts);
 router.post("/feed/:kind", authenticate, featureCtrl.createFeedPost);
 router.patch("/feed/:kind/:id", authenticate, featureCtrl.updateFeedPost);
-router.delete("/feed/:kind/:id", authenticate, requireStaff, featureCtrl.deleteFeedPost);
+router.delete("/feed/:kind/:id", authenticate, requireCap("feeds.moderate"), featureCtrl.deleteFeedPost);
 router.post("/feed/:kind/:id/comments", authenticate, feedSocial.addComment);
 router.delete("/feed/:kind/:id/comments/:commentId", authenticate, feedSocial.deleteComment);
 router.post("/feed/:kind/:id/reactions", authenticate, feedSocial.react);
@@ -174,13 +203,13 @@ router.delete("/material-saves/:id", authenticate, featureCtrl.deleteMaterialSav
 router.get("/payments/claims", authenticate, featureCtrl.listClaims);
 router.get("/subscriptions/count", authenticate, requireStaff, featureCtrl.subscriptionCount);
 router.post("/payments/claims", authenticate, featureCtrl.createClaim);
-router.patch("/payments/claims/:id/approve", authenticate, requireStaff, featureCtrl.approveClaim);
+router.patch("/payments/claims/:id/approve", authenticate, requireCap("payments.review"), featureCtrl.approveClaim);
 router.get("/settings/:key", authenticate, featureCtrl.getSetting);
-router.put("/settings/:key", authenticate, requireAdmin, featureCtrl.updateSetting);
+router.put("/settings/:key", authenticate, requireCap("settings.manage"), featureCtrl.updateSetting);
 router.get("/chat", authenticate, requireStaff, featureCtrl.listChat);
 router.post("/chat", authenticate, requireStaff, featureCtrl.createChat);
 router.patch("/chat/:id", authenticate, requireStaff, featureCtrl.updateChat);
-router.patch("/courses/:id", authenticate, requireStaff, coursesCtrl.updateCourse);
+router.patch("/courses/:id", authenticate, requireCap("courses.manage"), coursesCtrl.updateCourse);
 router.delete("/courses/:id", authenticate, requireAdmin, coursesCtrl.deleteCourse);
 
 // Notifications
