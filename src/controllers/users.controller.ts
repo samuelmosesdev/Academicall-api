@@ -1,62 +1,86 @@
+import { resolveAcademicSelection } from "./institutions.controller";
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { Prisma, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
-import { resolveAcademicSelection } from "./institutions.controller";
-import { DEFAULT_INSTITUTION_ID, institutionOf } from "../lib/scope";
-import { ADMIN_ONLY, CAPABILITIES, ROLE_DEFAULTS, TAG_DEFAULTS, TAGS, cleanPermissionList, defaultCaps, effectiveCaps, grantable, hasCap, outranks } from "../lib/access";
+import { CAPABILITIES, ADMIN_ONLY, ROLE_DEFAULTS, TAG_DEFAULTS, TAGS, cleanPermissionList, defaultCaps, effectiveCaps, grantable, hasCap, outranks } from "../lib/access";
 import { audit } from "../lib/audit";
 
+const USER_LIST_SELECT = {
+  id: true, email: true, name: true, role: true, plan: true, uniqueId: true, department: true, faculty: true,
+  program: true, institutionId: true, level: true, status: true, photoUrl: true, courseRepMeta: true,
+  mustChangePassword: true, staffTags: true, lastActiveAt: true, createdAt: true, emailVerified: true,
+  institution: { select: { name: true, displayName: true, abbreviation: true } },
+} as const;
+
+const GROUPS: Record<string, any> = {
+  students: { role: "user" },
+  courseReps: { role: "courseRep" },
+  news: { staffTags: { has: "news" } },
+  secretaries: { staffTags: { has: "secretary" } },
+  agents: { role: { in: ["agent", "alphaAgent"] } },
+  staff: { role: { in: ["admin", "alphaAgent", "agent"] } },
+  admins: { role: "admin" },
+};
+
+/**
+ * GET /users — the staff user directory.
+ * Without ?page it keeps the old shape (up to 500 newest). With ?page it is paginated
+ * and sortable: ?group=&status=&plan=&institutionId=&department=&level=&q=&sort=&dir=,
+ * and it returns per-group counts for the filter chips.
+ */
 export async function listUsers(req: Request, res: Response) {
   const role = req.query.role as string | undefined;
-  const search = req.query.q as string | undefined;
+  const search = String(req.query.q || "").trim();
   const tag = req.query.tag as string | undefined;
+  const where: any = { status: { not: "deleted" } };
+  const and: any[] = [];
+  if (role === "staff") and.push(GROUPS.staff); else if (role) and.push({ role: role as Role });
+  if (tag) and.push({ staffTags: { has: tag } });
+  if (search) {
+    and.push({ OR: [
+      { email: { contains: search, mode: "insensitive" } },
+      { name: { contains: search, mode: "insensitive" } },
+      { nickname: { contains: search, mode: "insensitive" } },
+      { uniqueId: { contains: search, mode: "insensitive" } },
+      { matricNumber: { contains: search, mode: "insensitive" } },
+    ] });
+  }
+  if (req.query.page === undefined) {
+    const users = await prisma.user.findMany({
+      where: { ...where, AND: and }, select: USER_LIST_SELECT, orderBy: { createdAt: "desc" },
+      take: Math.min(Number(req.query.limit) || 100, 500),
+    });
+    return res.json({ users });
+  }
 
-  const users = await prisma.user.findMany({
-    where: {
-      status: { not: "deleted" },
-      ...(role === "staff" ? { role: { in: ["admin", "alphaAgent", "agent"] as Role[] } } : role ? { role: role as Role } : {}),
-      ...(tag ? { staffTags: { has: tag } } : {}),
-      ...(search
-        ? {
-            OR: [
-              { email: { contains: search, mode: "insensitive" } },
-              { name: { contains: search, mode: "insensitive" } },
-              { uniqueId: { contains: search, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      plan: true,
-      uniqueId: true,
-      department: true,
-      faculty: true,
-      program: true,
-      level: true,
-      institutionId: true,
-      facultyId: true,
-      departmentId: true,
-      programId: true,
-      status: true,
-      photoUrl: true,
-      courseRepMeta: true,
-      mustChangePassword: true,
-      staffTags: true,
-      lastActiveAt: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "desc" },
-    take: Math.min(Number(req.query.limit) || 100, 500),
-  });
+  const base = [...and];
+  if (req.query.status && ["active", "suspended", "pending"].includes(String(req.query.status))) base.push({ status: String(req.query.status) });
+  if (req.query.plan && ["free", "pro", "annual"].includes(String(req.query.plan))) base.push({ plan: String(req.query.plan) });
+  if (req.query.institutionId) base.push({ institutionId: String(req.query.institutionId) });
+  if (req.query.department) base.push({ department: { contains: String(req.query.department), mode: "insensitive" } });
+  if (req.query.level) base.push({ level: { startsWith: String(req.query.level), mode: "insensitive" } });
+  const group = String(req.query.group || "all");
+  const listAnd = GROUPS[group] ? [...base, GROUPS[group]] : base;
 
-  res.json({ users });
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 25, 1), 100);
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const sortKey = ["createdAt", "name", "email", "lastActiveAt", "level"].includes(String(req.query.sort)) ? String(req.query.sort) : "createdAt";
+  const dir = req.query.dir === "asc" ? "asc" : "desc";
+  const orderBy = sortKey === "lastActiveAt" ? [{ lastActiveAt: { sort: dir, nulls: "last" } }, { createdAt: "desc" }] : [{ [sortKey]: dir }, { createdAt: "desc" }];
+
+  const [users, total, ...groupCounts] = await Promise.all([
+    prisma.user.findMany({ where: { ...where, AND: listAnd }, select: USER_LIST_SELECT, orderBy: orderBy as any, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.user.count({ where: { ...where, AND: listAnd } }),
+    ...Object.values(GROUPS).map((g) => prisma.user.count({ where: { ...where, AND: [...base, g] } })),
+    prisma.user.count({ where: { ...where, AND: base } }),
+  ]);
+  const keys = Object.keys(GROUPS);
+  const counts: Record<string, number> = { all: groupCounts[keys.length] as number };
+  keys.forEach((k, i) => { counts[k] = groupCounts[i] as number; });
+  res.json({ users, total, page, pageSize, counts });
 }
 
 function normalizeLevel(value: unknown) {
@@ -70,45 +94,37 @@ function normalizeLevel(value: unknown) {
 /** Any authenticated user can check whether a program-level Course Rep exists. */
 export async function courseRepStatus(req: Request, res: Response) {
   try {
-    if (!req.user) return res.status(401).json({ error: "Unauthenticated", hasCourseRep: false });
     const program = String(req.query.program || "").trim();
+    const department = String(req.query.department || "").trim();
     const level = String(req.query.level || "").trim();
-    const scope = program;
+    const scope = (program || department).trim();
 
     if (!scope || !level) {
       return res.status(400).json({
-        error: "program and level are required",
+        error: "program or department and level are required",
         hasCourseRep: false,
       });
     }
 
-    const requester = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { institutionId: true },
-    });
-    if (!requester) return res.status(401).json({ error: "User not found", hasCourseRep: false });
-    const institutionId = institutionOf(requester);
+    const requester = req.user ? await prisma.user.findUnique({ where: { id: req.user.id }, select: { institutionId: true } }) : null;
+    const inst = requester?.institutionId || "uofa";
     const reps = await prisma.user.findMany({
-      where: {
-        role: "courseRep",
-        status: "active",
-        ...(institutionId === DEFAULT_INSTITUTION_ID
-          ? { OR: [{ institutionId }, { institutionId: null }] }
-          : { institutionId }),
-      },
+      where: { role: "courseRep", status: "active", ...(inst === "uofa" ? { OR: [{ institutionId: "uofa" }, { institutionId: null }] } : { institutionId: inst }) },
       select: {
         id: true,
         name: true,
         department: true,
         program: true,
+      institutionId: true,
         level: true,
         courseRepMeta: true,
       },
+      take: 200,
     });
 
     const found = reps.find((candidate) => {
       const meta = (candidate.courseRepMeta as Record<string, unknown> | null) || {};
-      const candidateScope = String(meta.program || "").trim();
+      const candidateScope = String(meta.program || candidate.program || meta.department || candidate.department || "").trim();
       const candidateLevel = String(meta.level ?? candidate.level ?? "").trim();
       return (
         candidateScope.toLowerCase() === scope.toLowerCase() &&
@@ -122,7 +138,12 @@ export async function courseRepStatus(req: Request, res: Response) {
         ? {
             id: found.id,
             name: found.name,
-            program: (found.courseRepMeta as Record<string, unknown> | null)?.program || null,
+            program:
+              (found.courseRepMeta as Record<string, unknown> | null)?.program ||
+              found.program ||
+              (found.courseRepMeta as Record<string, unknown> | null)?.department ||
+              found.department ||
+              null,
             level:
               (found.courseRepMeta as Record<string, unknown> | null)?.level ||
               found.level ||
@@ -149,12 +170,9 @@ export async function getUser(req: Request, res: Response) {
       department: true,
       faculty: true,
       program: true,
-      level: true,
       institutionId: true,
-      facultyId: true,
-      departmentId: true,
-      programId: true,
       institution: { select: { id: true, name: true, displayName: true, abbreviation: true } },
+      level: true,
       matricNumber: true,
       phone: true,
       bio: true,
@@ -174,6 +192,8 @@ export async function getUser(req: Request, res: Response) {
       lastActiveAt: true,
       staffTags: true,
       permissions: true,
+      sessionsRevokedAt: true,
+      passwordChangedAt: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -194,10 +214,10 @@ export async function getUser(req: Request, res: Response) {
 
 const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
-  department: z.string().trim().optional().nullable(),
-  faculty: z.string().trim().optional().nullable(),
-  program: z.string().trim().optional().nullable(),
-  level: z.string().trim().optional().nullable(),
+  department: z.string().optional().nullable(),
+  faculty: z.string().optional().nullable(),
+  program: z.string().optional().nullable(),
+  level: z.string().optional().nullable(),
   matricNumber: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
   bio: z.string().optional().nullable(),
@@ -221,11 +241,12 @@ const updateProfileSchema = z.object({
   uniqueId: z.string().optional(), // only allowed if currently null
   canImportAI: z.boolean().optional(),
   autoPublish: z.boolean().optional(),
+  courseRepMeta: z.record(z.any()).nullable().optional(),
   customCourses: z.array(z.any()).optional(),
-  institutionId: z.string().min(1).nullable().optional(),
-  facultyId: z.string().min(1).nullable().optional(),
-  departmentId: z.string().min(1).nullable().optional(),
-  programId: z.string().min(1).nullable().optional(),
+  institutionId: z.string().min(1).optional().nullable(),
+  facultyId: z.string().min(1).optional().nullable(),
+  departmentId: z.string().min(1).optional().nullable(),
+  programId: z.string().min(1).optional().nullable(),
 });
 
 async function createUniqueId() {
@@ -246,47 +267,22 @@ export async function updateMe(req: Request, res: Response) {
     const current = await prisma.user.findUnique({ where: { id: req.user.id } });
     if (!current) return res.status(404).json({ error: "User not found" });
 
-    if (body.profileComplete && ["user", "courseRep"].includes(current.role)) {
-      const program = String(body.program ?? current.program ?? "").trim();
-      const department = String(body.department ?? current.department ?? "").trim();
-      const faculty = String(body.faculty ?? current.faculty ?? "").trim();
-      const level = String(body.level ?? current.level ?? "").trim();
-      if (!(body.institutionId ?? current.institutionId) || !program || !department || !faculty || !level) {
-        return res.status(400).json({
-          error: "Institution, faculty, department, program, and level are required to complete your profile.",
-        });
-      }
-    }
-
-    if (current.profileComplete && body.profileComplete === false) {
-      return res.status(400).json({ error: "A completed profile cannot be marked incomplete." });
-    }
-
-    const identityFields = [
-      "department", "faculty", "program", "level",
-      "institutionId", "facultyId", "departmentId", "programId",
-    ] as const;
-    const changingAcademicIdentity = identityFields.some(
-      (field) => body[field] !== undefined && body[field] !== (current[field] ?? null)
-    );
-    if (changingAcademicIdentity && current.profileComplete && String(current.program || "").trim()) {
-      return res.status(403).json({ error: "Academic details can only be changed through a profile change request" });
-    }
-
-    const academicIdsProvided =
-      body.facultyId !== undefined || body.departmentId !== undefined || body.programId !== undefined;
-    if (academicIdsProvided && body.institutionId === undefined && !current.institutionId) {
-      return res.status(400).json({ error: "Choose an institution before selecting its academic structure." });
-    }
-    const academicSelection: Prisma.UserUncheckedUpdateInput | null = body.institutionId === undefined
-      ? null
-      : body.institutionId
-        ? await resolveAcademicSelection(body)
-        : { institutionId: null, facultyId: null, departmentId: null, programId: null };
-
     // uniqueId can only be set once
     if (body.uniqueId && current.uniqueId) {
       return res.status(400).json({ error: "uniqueId already set" });
+    }
+
+    // Course-rep scope is assigned by staff; a user cannot widen it themselves.
+    if (body.courseRepMeta !== undefined && !["admin", "alphaAgent", "agent"].includes(current.role)) {
+      delete (body as any).courseRepMeta;
+    }
+
+    // Academic selection by id: validated top-down, official names stored alongside.
+    let academic: any = null;
+    if (body.institutionId !== undefined) {
+      academic = body.institutionId
+        ? await resolveAcademicSelection(body)
+        : { institutionId: null, facultyId: null, departmentId: null, programId: null };
     }
 
     const generatedUniqueId = body.profileComplete && !current.uniqueId
@@ -326,10 +322,13 @@ export async function updateMe(req: Request, res: Response) {
           : generatedUniqueId
             ? { uniqueId: generatedUniqueId }
             : {}),
-        ...(academicSelection || {}),
           canImportAI: body.canImportAI,
           autoPublish: body.autoPublish,
+          ...(body.courseRepMeta !== undefined
+            ? { courseRepMeta: body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta }
+            : {}),
           customCourses: body.customCourses,
+          ...(academic || {}),
       },
       select: {
         id: true,
@@ -372,9 +371,7 @@ export async function updateMe(req: Request, res: Response) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: err.errors });
     }
-    if (err && typeof err === "object" && "status" in err && err.status === 400 && "message" in err) {
-      return res.status(400).json({ error: err.message });
-    }
+    if ((err as any)?.status === 400) return res.status(400).json({ error: (err as Error).message });
     console.error(err);
     res.status(500).json({ error: "Update failed" });
   }
@@ -396,112 +393,66 @@ const adminUpdateSchema = z.object({
   fcmToken: z.string().nullable().optional(),
   deviceToken: z.string().nullable().optional(),
   avatarUrl: z.string().nullable().optional(),
-  institutionId: z.string().min(1).nullable().optional(),
-  facultyId: z.string().min(1).nullable().optional(),
-  departmentId: z.string().min(1).nullable().optional(),
-  programId: z.string().min(1).nullable().optional(),
+  institutionId: z.string().nullable().optional(),
+  facultyId: z.string().nullable().optional(),
+  departmentId: z.string().nullable().optional(),
+  programId: z.string().nullable().optional(),
 });
 
+class Forbidden extends Error { status = 403; }
+const STAFF_ROLES = ["admin", "alphaAgent", "agent"];
+
+/**
+ * Staff edit a user. Every field is checked against the editor's capabilities,
+ * and nobody but an admin can touch someone of equal or higher rank.
+ */
 export async function adminUpdateUser(req: Request, res: Response) {
   try {
     const actor = req.user!;
     const body = adminUpdateSchema.parse(req.body);
     const target = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
     if (!target) return res.status(404).json({ error: "User not found" });
-    if (!outranks(actor, target)) return res.status(403).json({ error: "You can't change an account at or above your own rank" });
-    const need = (cap: string) => {
-        if (!hasCap(actor, cap)) throw Object.assign(new Error(`You need the "${cap}" permission for that`), { status: 403 });
-    };
-    const staffRoles = ["admin", "alphaAgent", "agent"];
-    let role = body.role;
+    if (!outranks(actor, target)) throw new Forbidden("You can't change an account at or above your own rank");
+    const need = (cap: string) => { if (!hasCap(actor, cap)) throw new Forbidden(`You need the "${cap}" permission for that`); };
+
+    const data: Prisma.UserUpdateInput = {};
     let tags = [...(target.staffTags || [])];
+
+    // Legacy: "newsAgent" as a role now means "add the news duty".
+    let role = body.role;
     if (role === "newsAgent") {
-        need("users.news");
-        if (!tags.includes("news")) tags.push("news");
-        role = target.role === "newsAgent" ? "user" : target.role === "user" ? undefined : target.role;
+      need("users.news");
+      if (!tags.includes("news")) tags.push("news");
+      role = STAFF_ROLES.includes(target.role) || target.role === "courseRep" ? undefined : "user";
     }
-    const academicSelection: Prisma.UserUncheckedUpdateInput | null = body.institutionId === undefined
-        ? null
-        : body.institutionId
-          ? await resolveAcademicSelection(body)
-        : { institutionId: null, facultyId: null, departmentId: null, programId: null };
-    const meta = body.courseRepMeta;
-    if (role === "courseRep" || (meta !== undefined && meta !== null)) {
-        const program = String(meta?.program || "").trim();
-        const department = String(meta?.department || "").trim();
-        const level = String(meta?.level || "").trim();
-      if (!program || !department || !level) {
-        return res.status(400).json({
-          error: "A Course Rep assignment requires an explicit program, parent department, and level.",
-        });
-      }
-      if (
-        (body.program !== undefined && body.program !== program) ||
-        (body.department !== undefined && body.department !== department) ||
-        (body.level !== undefined && body.level !== level)
-      ) {
-        return res.status(400).json({
-          error: "Course Rep profile and assignment program, department, and level must match.",
-        });
-      }
-      if (
-        role === "courseRep" &&
-        (body.program !== program || body.department !== department || body.level !== level)
-      ) {
-        return res.status(400).json({
-          error: "Assigning the Course Rep role also requires matching user program, department, and level fields.",
-        });
-      }
-    }
-
-    const data: Prisma.UserUncheckedUpdateInput = {};
-
+    const courseRepChange = role === "courseRep" || (role === "user" && target.role === "courseRep") || body.courseRepMeta !== undefined;
     if (role !== undefined && role !== target.role) {
-      if (staffRoles.includes(role) || staffRoles.includes(target.role)) need("staff.manage");
+      if (STAFF_ROLES.includes(role) || STAFF_ROLES.includes(target.role)) need("staff.manage");
       else need("users.courseRep");
       data.role = role;
-      if (!staffRoles.includes(role)) data.permissions = Prisma.JsonNull;
+      if (!STAFF_ROLES.includes(role)) data.permissions = Prisma.JsonNull;
       if (role !== "courseRep" && body.courseRepMeta === undefined) data.courseRepMeta = Prisma.JsonNull;
-    }
-    if (body.plan !== undefined && body.plan !== target.plan) {
-      need("users.edit");
-      data.plan = body.plan;
-    }
-    if (body.status !== undefined && body.status !== target.status) {
-      need(body.status === "deleted" ? "users.delete" : "users.suspend");
-      if (actor.id === target.id) return res.status(403).json({ error: "You can't change your own account status" });
-      data.status = body.status;
-    }
-    if (body.mustChangePassword !== undefined && body.mustChangePassword !== target.mustChangePassword) {
-      need("users.password");
-      data.mustChangePassword = body.mustChangePassword;
-    }
-    const profileFields = ["name", "department", "faculty", "program", "level", "fcmToken", "deviceToken", "avatarUrl"] as const;
-    const touched = profileFields.filter((key) => body[key] !== undefined && body[key] !== target[key]);
-    if (touched.length || academicSelection) {
-      const repAssignment = (role === "courseRep" || target.role === "courseRep") &&
-        touched.every((key) => ["department", "faculty", "program", "level"].includes(key)) &&
-        !body.name && !body.fcmToken && !body.deviceToken && !body.avatarUrl && body.plan === undefined;
-      need(repAssignment ? "users.courseRep" : "users.edit");
-      for (const key of profileFields) {
-        if (body[key] !== undefined) {
-          if (key === "name") data.name = body.name;
-          if (key === "department") data.department = body.department;
-          if (key === "faculty") data.faculty = body.faculty;
-          if (key === "program") data.program = body.program;
-          if (key === "level") data.level = body.level;
-          if (key === "fcmToken") data.fcmToken = body.fcmToken;
-          if (key === "deviceToken") data.deviceToken = body.deviceToken;
-          if (key === "avatarUrl") data.avatarUrl = body.avatarUrl;
-        }
-      }
-      if (academicSelection) Object.assign(data, academicSelection);
     }
     if (body.courseRepMeta !== undefined) {
       need("users.courseRep");
       data.courseRepMeta = body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta;
-    } else if (role === "user" && target.role === "courseRep") {
-      data.courseRepMeta = Prisma.JsonNull;
+    }
+    if (body.status !== undefined && body.status !== target.status) {
+      need(body.status === "deleted" ? "users.delete" : "users.suspend");
+      if (actor.id === target.id) throw new Forbidden("You can't suspend your own account");
+      data.status = body.status;
+    }
+    if (body.mustChangePassword !== undefined) {
+      need("users.password");
+      data.mustChangePassword = body.mustChangePassword;
+    }
+    const profileFields = ["plan", "name", "department", "faculty", "program", "level", "institutionId", "facultyId", "departmentId", "programId", "fcmToken", "deviceToken", "avatarUrl"] as const;
+    const touched = profileFields.filter((k) => body[k] !== undefined && body[k] !== (target as any)[k]);
+    if (touched.length) {
+      // Assigning a Course Rep carries their department and level with it.
+      const repOnly = courseRepChange && touched.every((k) => ["department", "faculty", "program", "level"].includes(k));
+      if (repOnly) need("users.courseRep"); else need("users.edit");
+      for (const k of touched) (data as any)[k] = body[k];
     }
     if (body.assignedBy !== undefined) data.assignedBy = body.assignedBy;
     if (body.assignedAt !== undefined) data.assignedAt = body.assignedAt;
@@ -511,39 +462,17 @@ export async function adminUpdateUser(req: Request, res: Response) {
       where: { id: target.id },
       data,
       select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        plan: true,
-        status: true,
-        department: true,
-        faculty: true,
-        program: true,
-        level: true,
-        institutionId: true,
-        facultyId: true,
-        departmentId: true,
-        programId: true,
-        institution: { select: { id: true, name: true, displayName: true, abbreviation: true } },
-        courseRepMeta: true,
-        assignedBy: true,
-        assignedAt: true,
-        mustChangePassword: true,
-        staffTags: true,
+        id: true, email: true, name: true, role: true, plan: true, status: true, department: true, faculty: true, program: true,
+        level: true, courseRepMeta: true, assignedBy: true, assignedAt: true, mustChangePassword: true, staffTags: true,
       },
     });
-
     if (data.role) await audit(actor, "role.change", { id: target.id, label: target.name || target.email }, { from: target.role, to: data.role });
     if (data.status) await audit(actor, data.status === "suspended" ? "user.suspend" : data.status === "active" ? "user.reactivate" : "user.delete", { id: target.id, label: target.name || target.email });
     if (data.staffTags) await audit(actor, "duty.change", { id: target.id, label: target.name || target.email }, { from: target.staffTags, to: tags });
     res.json({ user });
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
-    if (err && typeof err === "object" && "status" in err && (err as { status?: unknown }).status === 403) {
-      const message = "message" in err && typeof err.message === "string" ? err.message : "Forbidden";
-      return res.status(403).json({ error: message });
-    }
+    if (err instanceof Forbidden) return res.status(403).json({ error: err.message });
     console.error("adminUpdateUser failed:", err);
     const reason =
       err instanceof Prisma.PrismaClientValidationError

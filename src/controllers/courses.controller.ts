@@ -2,23 +2,24 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 
+/**
+ * GET /courses — the platform's own course rows (CBT, materials, department lists).
+ * The national catalogue (source "catalogue", ~13k rows) is left out unless ?catalog=1;
+ * students browse it through /me/courses/suggestions and /catalog/courses instead.
+ */
 export async function listCourses(req: Request, res: Response) {
   const q = req.query.q as string | undefined;
-  const isStaff = ["admin", "alphaAgent", "agent"].includes(req.user?.role || "");
+  const and: any[] = [];
+  if (req.query.catalog !== "1") and.push({ OR: [{ source: null }, { source: { not: "catalogue" } }] });
+  if (req.query.archived !== "1") and.push({ archivedAt: null });
+  if (q) and.push({ OR: [
+    { title: { contains: q, mode: "insensitive" } },
+    { code: { contains: q, mode: "insensitive" } },
+    { category: { contains: q, mode: "insensitive" } },
+  ] });
 
   const courses = await prisma.course.findMany({
-    where: {
-      ...(!isStaff ? { published: true } : {}),
-      ...(q
-        ? {
-          OR: [
-            { title: { contains: q, mode: "insensitive" } },
-            { code: { contains: q, mode: "insensitive" } },
-            { category: { contains: q, mode: "insensitive" } },
-          ],
-        }
-        : {}),
-    },
+    where: { AND: and },
     orderBy: { createdAt: "desc" },
     take: 5000,
   });
@@ -54,53 +55,8 @@ const createSchema = z.object({
 
 export async function createCourse(req: Request, res: Response) {
   try {
-    if (!req.user || !["admin", "alphaAgent", "agent", "courseRep"].includes(req.user.role)) {
-      return res.status(403).json({ error: "Only staff and Course Reps can add courses" });
-    }
     const body = createSchema.parse(req.body);
-    let data = body;
-    if (req.user?.role === "courseRep") {
-      const rep = await prisma.user.findUnique({
-        where: { id: req.user.id },
-        select: { courseRepMeta: true },
-      });
-      const meta = rep?.courseRepMeta as { program?: string; level?: string; faculty?: string } | null;
-      const program = String(meta?.program || "").trim();
-      const assignedLevel = String(meta?.level || "").trim();
-      const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
-      const normalizeLevel = (value: string) => normalize(value).replace(/\s*level\s*/g, "");
-
-      if (!program || !assignedLevel) {
-        return res.status(403).json({ error: "A Course Rep must have an assigned program and level to add courses" });
-      }
-      if (!body.level || normalizeLevel(body.level) !== normalizeLevel(assignedLevel)) {
-        return res.status(403).json({ error: "Course Reps can only add courses for their assigned level" });
-      }
-
-      if (body.code) {
-        const duplicate = await prisma.course.findFirst({
-          where: {
-            code: { equals: body.code, mode: "insensitive" },
-            department: { equals: program, mode: "insensitive" },
-            level: { equals: assignedLevel, mode: "insensitive" },
-          },
-          select: { id: true },
-        });
-        if (duplicate) return res.status(409).json({ error: "That course already exists in your program and level" });
-      }
-
-      data = {
-        ...body,
-        faculty: meta?.faculty || body.faculty || null,
-        department: program,
-        level: assignedLevel,
-        source: "courseRep",
-        published: true,
-        requestedBy: req.user.id,
-        approvedBy: null,
-      };
-    }
-    const course = await prisma.course.create({ data });
+    const course = await prisma.course.create({ data: body });
     res.status(201).json({ course });
   } catch (err) {
     if (err instanceof z.ZodError) {

@@ -5,31 +5,35 @@ import morgan from "morgan";
 import routes from "./routes";
 
 const app = express();
+const configuredOrigins = process.env.CORS_ORIGIN?.split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+const allowedOrigins = configuredOrigins?.length
+  ? configuredOrigins
+  : ["https://academicall.site", "https://localhost"];
+const isLocalOrigin = (origin: string) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+const isAllowedOrigin = (origin: string | undefined) =>
+  !origin ||
+  (process.env.NODE_ENV !== "production" && isLocalOrigin(origin)) ||
+  allowedOrigins.includes(origin);
 
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
+app.use((req, res, next) => {
+  const origin = req.get("Origin");
+  if (origin && !isAllowedOrigin(origin)) {
+    return res.status(403).json({ error: "Origin not allowed" });
+  }
+  return next();
+});
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Always allow local Vite/dev servers (any port)
-      const isLocal =
-        !!origin &&
-        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-
-      const configured =
-        process.env.CORS_ORIGIN?.split(",")
-          .map((item) => item.trim())
-          .filter(Boolean) || [];
-
-      if (!origin || isLocal || configured.length === 0 || configured.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-
-      callback(null, false);
+      callback(null, isAllowedOrigin(origin));
     },
     credentials: true,
   })

@@ -279,19 +279,7 @@ export async function updateDocument(req: Request, res: Response) {
   }
   if (existing.uploadedById !== req.user.id && !isStaff(req.user.role)) return res.status(403).json({ error: "Forbidden" });
   let data: Record<string, unknown>;
-  if (existing.source === "personal" && !isStaff(req.user.role)) {
-    const parsed = z.object({
-        title: z.string().min(1).optional(),
-        description: z.string().nullable().optional(),
-        fileUrl: z.string().url().nullable().optional(),
-        thumbnailUrl: z.string().url().nullable().optional(),
-        fileName: z.string().nullable().optional(),
-        fileSize: z.number().int().nonnegative().nullable().optional(),
-        tags: z.array(z.string()).nullable().optional(),
-      }).safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors });
-    data = parsed.data;
-  } else if (existing.source === "courseRep" && req.user.role === "courseRep") {
+  if (!isStaff(req.user.role)) {
     const parsed = z.object({
       title: z.string().min(1).optional(),
       description: z.string().nullable().optional(),

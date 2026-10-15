@@ -40,66 +40,66 @@ enum NotificationType {
 }
 
 model User {
-  id                      String     @id @default(uuid())
-  firebaseUid             String?    @unique // legacy/unused — hybrid Firebase auth bridge was removed
-  googleUid               String? // for direct Google Identity Services auth; email is the unique account key
-  email                   String     @unique
-  passwordHash            String? // null when using only Firebase
-  passwordChangedAt       DateTime?
-  mustChangePassword      Boolean    @default(false)
-  passwordResetHash       String?
-  passwordResetExpiresAt  DateTime?
-  name                    String?
-  role                    Role       @default(user)
-  plan                    Plan       @default(free)
-  status                  UserStatus @default(active)
-  uniqueId                String?    @unique // e.g. UAR-24-8831
-  emailVerified           Boolean    @default(false)
-  emailVerificationHash   String?
+  id                         String       @id @default(uuid())
+  firebaseUid                String?      @unique // legacy/unused — hybrid Firebase auth bridge was removed
+  googleUid                  String? // for direct Google Identity Services auth; email is the unique account key
+  email                      String       @unique
+  passwordHash               String? // null when using only Firebase
+  passwordChangedAt          DateTime?
+  mustChangePassword         Boolean      @default(false)
+  passwordResetHash          String?
+  passwordResetExpiresAt     DateTime?
+  name                       String?
+  role                       Role         @default(user)
+  plan                       Plan         @default(free)
+  status                     UserStatus   @default(active)
+  uniqueId                   String?      @unique // e.g. UAR-24-8831
+  emailVerified              Boolean      @default(false)
+  emailVerificationHash      String?
   emailVerificationExpiresAt DateTime?
-  emailVerificationSentAt DateTime?
-  emailVerificationAttempts Int      @default(0)
-  profileComplete         Boolean    @default(false)
-  department              String?
-  faculty                 String?
-  program                 String?
-  level                   String?
-  institutionId           String?
-  institution             Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
-  facultyId               String?
-  departmentId            String?
-  programId               String?
-  matricNumber            String?
-  phone                   String?
-  bio                     String?
-  interests               String?
-  dob                     String?
-  gender                  String?
-  nickname                String?
-  showDepartment          Boolean    @default(true)
-  showPhone               Boolean    @default(false)
-  allowAnonymousComments  Boolean    @default(false)
-  photoUrl                String?
-  avatarUrl               String?
-  settings                Json?
-  fcmToken                String?
-  deviceToken             String?
-  fcmTokens               Json?
-  coursesEnrolledCount    Int        @default(0)
-  questionsPracticedCount Int        @default(0)
-  studyStreakDays         Int        @default(0)
-  materialsOpenedCount    Int        @default(0)
-  lastActiveDate          String?
-  lastActiveAt            DateTime?
-  courseRepMeta           Json?
-  assignedBy              String?
-  assignedAt              DateTime?
-  agentDomain             String?
-  createdByAdmin          Boolean    @default(false)
-  createdByUid            String?
-  canImportAI             Boolean    @default(true)
-  autoPublish             Boolean    @default(false)
-  customCourses           Json?
+  emailVerificationSentAt    DateTime?
+  emailVerificationAttempts  Int          @default(0)
+  profileComplete            Boolean      @default(false)
+  department                 String?
+  faculty                    String?
+  program                    String?
+  level                      String?
+  institutionId              String?
+  institution                Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  facultyId                  String?
+  departmentId               String?
+  programId                  String?
+  matricNumber               String?
+  phone                      String?
+  bio                        String?
+  interests                  String?
+  dob                        String?
+  gender                     String?
+  nickname                   String?
+  showDepartment             Boolean      @default(true)
+  showPhone                  Boolean      @default(false)
+  allowAnonymousComments     Boolean      @default(false)
+  photoUrl                   String?
+  avatarUrl                  String?
+  settings                   Json?
+  fcmToken                   String?
+  deviceToken                String?
+  fcmTokens                  Json?
+  coursesEnrolledCount       Int          @default(0)
+  questionsPracticedCount    Int          @default(0)
+  studyStreakDays            Int          @default(0)
+  materialsOpenedCount       Int          @default(0)
+  lastActiveDate             String?
+  lastActiveAt               DateTime?
+  courseRepMeta              Json?
+  assignedBy                 String?
+  assignedAt                 DateTime?
+  agentDomain                String?
+  createdByAdmin             Boolean      @default(false)
+  createdByUid               String?
+  canImportAI                Boolean      @default(true)
+  autoPublish                Boolean      @default(false)
+  customCourses              Json?
   /// Add-on duties any user can hold alongside their role: "news", "secretary"
   staffTags                  String[]     @default([])
   /// Admin-chosen capability list; null = the defaults for the role and tags
@@ -107,20 +107,20 @@ model User {
   /// Tokens issued before this moment are rejected (force sign-out)
   sessionsRevokedAt          DateTime?
   createdAt                  DateTime     @default(now())
-  updatedAt               DateTime   @updatedAt
+  updatedAt                  DateTime     @updatedAt
 
   // Relations
-  documents            Document[]       @relation("UploadedBy")
-  enrollments          Enrollment[]
-  notifications        Notification[]   @relation("UserNotifications")
-  createdNotifications Notification[]   @relation("CreatedBy")
-  activityLogs         ActivityLog[]
-  paymentClaims        PaymentClaim[]
-  timetableEvents      TimetableEvent[]
-  materialSaves        MaterialSave[]
-  requests             Request[]        @relation("Requester")
+  documents             Document[]             @relation("UploadedBy")
+  enrollments           Enrollment[]
+  notifications         Notification[]         @relation("UserNotifications")
+  createdNotifications  Notification[]         @relation("CreatedBy")
+  activityLogs          ActivityLog[]
+  paymentClaims         PaymentClaim[]
+  timetableEvents       TimetableEvent[]
+  materialSaves         MaterialSave[]
+  requests              Request[]              @relation("Requester")
   profileChangeRequests ProfileChangeRequest[]
-  subscriptions       Subscription[]
+  subscriptions         Subscription[]
   departmentMemberships DepartmentMembership[] @relation("DeptMemberships")
   studyGroupsCreated    StudyGroup[]           @relation("StudyGroupCreator")
   studyGroupMemberships StudyGroupMember[]     @relation("StudyGroupMemberUser")
@@ -141,36 +141,36 @@ model User {
 }
 
 model Document {
-  id           String   @id @default(uuid())
-  institutionId String?
-  title        String
-  description  String?
-  fileUrl      String?
-  thumbnailUrl String?
-  fileName     String?
-  fileSize     Int?
-  tags         Json?
-  faculty      String?
-  department   String?
-  level        String?
-  source       String? // "courseRep" | "admin" | "agent"
-  status       String   @default("pending")
-  approvedById String?
-  approvedAt   DateTime?
-  uploadedById String
-  uploadedBy   User     @relation("UploadedBy", fields: [uploadedById], references: [id])
-  courseId     String?
-  course       Course?  @relation(fields: [courseId], references: [id])
-  openCount    Int      @default(0)
-  questionCount Int     @default(0)
-  easyQuestionCount Int  @default(0)
-  mediumQuestionCount Int @default(0)
-  hardQuestionCount Int  @default(0)
-  reactions    Json? // { like: number, ... }
+  id                  String    @id @default(uuid())
+  institutionId       String?
+  title               String
+  description         String?
+  fileUrl             String?
+  thumbnailUrl        String?
+  fileName            String?
+  fileSize            Int?
+  tags                Json?
+  faculty             String?
+  department          String?
+  level               String?
+  source              String? // "courseRep" | "admin" | "agent"
+  status              String    @default("pending")
+  approvedById        String?
+  approvedAt          DateTime?
+  uploadedById        String
+  uploadedBy          User      @relation("UploadedBy", fields: [uploadedById], references: [id])
+  courseId            String?
+  course              Course?   @relation(fields: [courseId], references: [id])
+  openCount           Int       @default(0)
+  questionCount       Int       @default(0)
+  easyQuestionCount   Int       @default(0)
+  mediumQuestionCount Int       @default(0)
+  hardQuestionCount   Int       @default(0)
+  reactions           Json? // { like: number, ... }
   deletedAt           DateTime? // soft delete: recoverable from the Document Center
   deletedById         String?
-  createdAt            DateTime  @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([uploadedById])
   @@index([deletedAt])
@@ -192,15 +192,24 @@ model Course {
   thumbnailUrl String?
   category     String?
   source       String?
-  published    Boolean    @default(true)
+  published    Boolean  @default(true)
   approvedBy   String?
   requestedBy  String?
+  /// Credit units from the national curriculum, when known
+  units        Int?
+  /// "CODE|title" (upper-cased) for courses imported from the national curricula; null for hand-made ones
+  catalogKey   String?  @unique
+  /// Set when an admin retires a course; it stays on existing student lists but stops being suggested
+  archivedAt   DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  documents   Document[]
-  enrollments Enrollment[]
+  documents         Document[]
+  enrollments       Enrollment[]
+  curriculumEntries CurriculumCourse[]
+  departmentLinks   DepartmentCourse[]
 
+  @@index([code])
   @@map("courses")
 }
 
@@ -211,14 +220,19 @@ model Enrollment {
   courseId       String?
   course         Course?   @relation(fields: [courseId], references: [id])
   courseTitle    String?
+  /// Course code for custom (non-catalogue) entries, upper-cased; catalogue entries read it from the course
+  courseCode     String?
+  /// catalogue | custom | ai | courseRep | legacy
+  source         String?   @default("catalogue")
   topicLabel     String?
   progressPct    Int       @default(0)
   lastAccessedAt DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  @@index([userId])
   @@unique([userId, courseId])
+  @@unique([userId, courseCode])
+  @@index([userId])
   @@map("enrollments")
 }
 
@@ -254,7 +268,6 @@ model DepartmentMembership {
   department          String
   faculty             String?
   level               String?
-  institutionId       String?
   status              String    @default("pending")
   requestedAt         DateTime  @default(now())
   admittedAt          DateTime?
@@ -267,23 +280,24 @@ model DepartmentMembership {
   reviewReason        String?
   reviewedById        String?
   reviewedAt          DateTime?
+  institutionId       String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
   @@unique([userId, institutionId, department])
-  @@index([department, status])
   @@index([institutionId, department])
+  @@index([department, status])
   @@index([userId])
   @@map("department_memberships")
 }
 
 model AnnouncementRead {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   announcementId String?
   userId         String?
   readAt         DateTime?
   meta           Json?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
   @@index([announcementId])
   @@index([userId])
@@ -351,9 +365,9 @@ model PaymentOrphan {
 }
 
 model Subscription {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   status    String?
   plan      String?
   provider  String?
@@ -361,8 +375,8 @@ model Subscription {
   startsAt  DateTime?
   endsAt    DateTime?
   meta      Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@index([userId, status])
   @@index([status])
@@ -409,7 +423,7 @@ model TimetableEvent {
 }
 
 model ClassEvent {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   title         String
   courseCode    String?
   venue         String?
@@ -424,8 +438,8 @@ model ClassEvent {
   institutionId String?
   comments      Json?
   reactions     Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([department, level])
   @@index([institutionId, department])
@@ -448,24 +462,24 @@ model MaterialSave {
 }
 
 model FeedPost {
-  id          String   @id @default(uuid())
-  kind        String
-  title       String?
-  body        String?
-  courseCode  String?
-  faculty     String?
-  department  String?
-  level       String?
-  pinned      Boolean  @default(false)
-  authorId    String
-  authorName  String?
-  authorRole  String?
-  authorPhoto String?
-  comments    Json?
-  reactions   Json?
+  id            String   @id @default(uuid())
+  kind          String
+  title         String?
+  body          String?
+  courseCode    String?
+  faculty       String?
+  department    String?
+  level         String?
+  pinned        Boolean  @default(false)
+  authorId      String
+  authorName    String?
+  authorRole    String?
+  authorPhoto   String?
+  comments      Json?
+  reactions     Json?
   institutionId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([kind, department, level])
   @@index([institutionId, kind, department])
@@ -473,27 +487,27 @@ model FeedPost {
 }
 
 model Request {
-  id           String   @id @default(uuid())
-  requesterUid String
-  requester    User     @relation("Requester", fields: [requesterUid], references: [id])
-  type         String?
-  title        String?
-  body         String?
-  requesterName String?
+  id             String    @id @default(uuid())
+  requesterUid   String
+  requester      User      @relation("Requester", fields: [requesterUid], references: [id])
+  type           String?
+  title          String?
+  body           String?
+  requesterName  String?
   requesterEmail String?
-  requesterRole String?
-  field        String?
-  fieldLabel   String?
+  requesterRole  String?
+  field          String?
+  fieldLabel     String?
   requestedValue String?
-  reason       String?
-  reviewedAt   DateTime?
-  reviewedBy   String?
+  reason         String?
+  reviewedAt     DateTime?
+  reviewedBy     String?
   reviewedByName String?
-  reviewNote   String?
-  status       String   @default("pending") // pending | approved | rejected
-  meta         Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  reviewNote     String?
+  status         String    @default("pending") // pending | approved | rejected
+  meta           Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([requesterUid])
   @@index([status])
@@ -501,9 +515,9 @@ model Request {
 }
 
 model ProfileChangeRequest {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userName       String?
   userEmail      String?
   uniqueId       String?
@@ -512,13 +526,13 @@ model ProfileChangeRequest {
   currentValue   String?
   requestedValue String
   reason         String?
-  status         String   @default("pending")
+  status         String    @default("pending")
   reviewedAt     DateTime?
   reviewedBy     String?
   reviewedByName String?
   adminNote      String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([userId])
   @@index([status])
@@ -526,19 +540,19 @@ model ProfileChangeRequest {
 }
 
 model Announcement {
-  id        String   @id @default(uuid())
-  title     String
-  body      String?
-  createdBy String?
-  published Boolean  @default(true)
-  audience  String   @default("all")
-  faculty   String?
+  id         String   @id @default(uuid())
+  title      String
+  body       String?
+  createdBy  String?
+  published  Boolean  @default(true)
+  audience   String   @default("all")
+  faculty    String?
   department String?
-  level     String?
+  level      String?
   courseCode String?
-  pinned    Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  pinned     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@map("announcements")
 }
@@ -553,28 +567,28 @@ model Setting {
 }
 
 model CbtQuestion {
-  id                 String   @id @default(uuid())
-  courseId           String?
-  documentId         String?
-  materialId         String?
-  courseCode         String?
-  courseTitle        String?
-  topic              String?
-  faculty            String?
-  department         String?
-  level              String?
-  questionText       String
-  options            Json
-  correctIndex       Int
-  explanation        String?
-  difficulty         String   @default("medium")
-  marks              Int      @default(1)
-  referenceCode      String?
-  hintEnabled        Boolean  @default(true)
-  source             String?
-  generatedByUserId  String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                String   @id @default(uuid())
+  courseId          String?
+  documentId        String?
+  materialId        String?
+  courseCode        String?
+  courseTitle       String?
+  topic             String?
+  faculty           String?
+  department        String?
+  level             String?
+  questionText      String
+  options           Json
+  correctIndex      Int
+  explanation       String?
+  difficulty        String   @default("medium")
+  marks             Int      @default(1)
+  referenceCode     String?
+  hintEnabled       Boolean  @default(true)
+  source            String?
+  generatedByUserId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([courseCode])
   @@index([documentId])
@@ -641,14 +655,16 @@ model StaffChatMessage {
   @@map("staff_chat_messages")
 }
 
+// ─── Academic structure: Institution → Faculty → Department → Program ────────
+
 model Institution {
   id           String   @id
-  name         String
+  name         String // official name, exactly as published (e.g. JAMB IBASS)
   displayName  String?
   abbreviation String?
-  type         String?
-  category     String?
-  ownership    String?
+  type         String? // Degree | NCE | ND ...
+  category     String? // e.g. FEDERAL UNIVERSITIES
+  ownership    String? // Federal | State | Private
   state        String?
   source       String   @default("ibass")
   active       Boolean  @default(true)
@@ -670,7 +686,7 @@ model Faculty {
   institutionId String
   institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   name          String
-  kind          String      @default("faculty")
+  kind          String      @default("faculty") // faculty | ibass_group | programme_group | unassigned
   active        Boolean     @default(true)
   createdAt     DateTime    @default(now())
 
@@ -685,11 +701,12 @@ model AcademicDepartment {
   facultyId String
   faculty   Faculty  @relation(fields: [facultyId], references: [id], onDelete: Cascade)
   name      String
-  derived   Boolean  @default(false)
+  derived   Boolean  @default(false) // true when the source listed no department (named after its programme)
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
   programs Program[]
+  courses  DepartmentCourse[]
 
   @@unique([facultyId, name])
   @@map("academic_departments")
@@ -700,20 +717,24 @@ model Program {
   departmentId String
   department   AcademicDepartment @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   name         String
-  status       String             @default("approved")
+  status       String             @default("approved") // approved | pending
   duration     String?
   award        String?
   utmeSubjects String?
   active       Boolean            @default(true)
   createdAt    DateTime           @default(now())
 
+  curricula ProgramCurriculum[]
+
   @@unique([departmentId, name])
   @@map("programs")
 }
 
+// ─── Study groups ─────────────────────────────────────────────────────────────
+
 model StudyGroup {
   id                 String       @id @default(uuid())
-  code               String       @unique
+  code               String       @unique // public invite code, e.g. Ab7KxP9q
   name               String
   description        String?
   iconUrl            String?
@@ -722,15 +743,17 @@ model StudyGroup {
   approvalRequired   Boolean      @default(true)
   maxMembers         Int          @default(200)
   memberCount        Int          @default(1)
+  // Course-rep / departmental groups
   official           Boolean      @default(false)
   institutionId      String?
   institution        Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
-  scopeType          String       @default("open")
+  scopeType          String       @default("open") // open | faculty | department | program | course | level
   faculty            String?
   department         String?
   program            String?
   courseCode         String?
   level              String?
+  // Activity
   lastMessageAt      DateTime?
   lastMessagePreview String?
   lastMessageSender  String?
@@ -754,14 +777,15 @@ model StudyGroupMember {
   group              StudyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
   userId             String
   user               User       @relation("StudyGroupMemberUser", fields: [userId], references: [id], onDelete: Cascade)
-  role               String     @default("member")
-  status             String     @default("pending")
+  role               String     @default("member") // creator | moderator | member
+  status             String     @default("pending") // pending | active | rejected | left | removed
   requestedAt        DateTime   @default(now())
   joinedAt           DateTime?
   reviewedById       String?
   reviewedAt         DateTime?
   lastReadAt         DateTime?
-  historyAccess      String     @default("none")
+  // Older-message access for members who joined later
+  historyAccess      String     @default("none") // none | pending | granted | rejected
   historyRequestedAt DateTime?
   historyReviewedAt  DateTime?
   historyReviewedBy  String?
@@ -781,18 +805,18 @@ model StudyGroupMessage {
   group              StudyGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
   senderId           String?
   sender             User?      @relation("StudyGroupMessageSender", fields: [senderId], references: [id], onDelete: SetNull)
-  type               String     @default("text")
+  type               String     @default("text") // text | image | video | document | system
   text               String?
   attachmentUrl      String?
   attachmentName     String?
   attachmentMime     String?
   attachmentBytes    Int?
-  attachmentWidth   Int?
-  attachmentHeight  Int?
+  attachmentWidth    Int?
+  attachmentHeight   Int?
   attachmentDuration Int?
   thumbnailUrl       String?
-  archive            Json? // text + attachment kept on delete so staff can restore
-  clientId           String?
+  archive            Json? // text + attachment kept on delete so staff can restore it
+  clientId           String? // client-generated id, makes retries idempotent
   deletedAt          DateTime?
   deletedById        String?
   createdAt          DateTime   @default(now())
@@ -937,4 +961,77 @@ model SecretariatRecord {
   @@index([kind, status])
   @@index([createdAt])
   @@map("secretariat_records")
+}
+
+/// A national course list (NUC CCMAS/BMAS, NBTE, NCCE) — one per programme heading in the source document.
+model Curriculum {
+  id               String   @id
+  name             String
+  tier             String // degree | nd | nce
+  edition          String?
+  legacyEdition    String?
+  /// Applies to every programme of its tier at the listed institutions (GNS, GSE, EDU)
+  general          Boolean  @default(false)
+  aliases          String[] @default([])
+  institutionAbbrs String[] @default([])
+  source           String   @default("national") // national | admin
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  entries  CurriculumCourse[]
+  programs ProgramCurriculum[]
+
+  @@index([tier])
+  @@map("curricula")
+}
+
+model CurriculumCourse {
+  id           String     @id @default(uuid())
+  curriculumId String
+  curriculum   Curriculum @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
+  courseId     String
+  course       Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  level        String
+  semester     String?
+  units        Int?
+  status       String?
+  /// From the older curriculum (NUC BMAS), kept for students on the previous scheme
+  legacy       Boolean    @default(false)
+
+  @@unique([curriculumId, courseId, level, legacy])
+  @@index([courseId])
+  @@map("curriculum_courses")
+}
+
+model ProgramCurriculum {
+  programId    String
+  program      Program    @relation(fields: [programId], references: [id], onDelete: Cascade)
+  curriculumId String
+  curriculum   Curriculum @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
+  /// jamb (institution + programme name) | name (programme name only) | general | admin
+  matchedBy    String     @default("jamb")
+  createdAt    DateTime   @default(now())
+
+  @@id([programId, curriculumId])
+  @@index([curriculumId])
+  @@map("program_curricula")
+}
+
+/// A course an admin attached to one department (institution-specific courses, electives, corrections).
+model DepartmentCourse {
+  id           String             @id @default(uuid())
+  departmentId String
+  department   AcademicDepartment @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  courseId     String
+  course       Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  level        String?
+  semester     String?
+  status       String?
+  createdById  String?
+  createdAt    DateTime           @default(now())
+
+  @@unique([departmentId, courseId])
+  @@index([courseId])
+  @@map("department_courses")
 }

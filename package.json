@@ -1,7 +1,7 @@
 {
   "name": "academicall-api",
   "version": "1.0.0",
-  "description": "API-first backend for Academicall / UofA Readers — PostgreSQL + Express + Prisma",
+  "description": "API-first backend for Academicall / UofA Readers \u2014 PostgreSQL + Express + Prisma",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
@@ -12,9 +12,12 @@
     "prisma:studio": "prisma studio",
     "db:push": "prisma db push",
     "db:seed": "ts-node prisma/seed.ts",
+    "migrate:firestore": "node scripts/migrate-firestore-to-postgres.mjs",
     "db:seed:institutions": "ts-node src/scripts/seedInstitutions.ts",
-    "test:integration": "node tests/integration.test.mjs",
-    "migrate:firestore": "node scripts/migrate-firestore-to-postgres.mjs"
+    "data:institutions": "python3 scripts/build-institutions-data.py",
+    "test:integration": "npm run build && node tests/integration.test.mjs",
+    "test:local": "cross-env-shell DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/academicall_test \"npx prisma migrate deploy && npm run db:seed:institutions && npm run db:seed:curricula && npm run test:integration\"",
+    "db:seed:curricula": "ts-node src/scripts/seedCurricula.ts"
   },
   "keywords": [
     "api",
@@ -27,6 +30,7 @@
   "license": "MIT",
   "dependencies": {
     "@prisma/client": "^6.5.0",
+    "@resvg/resvg-js": "2.6",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -36,6 +40,8 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "prisma": "^6.5.0",
+    "satori": "^0.12.2",
+    "sharp": "^0.33.5",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -45,6 +51,7 @@
     "@types/jsonwebtoken": "^9.0.9",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.13.10",
+    "cross-env": "^7.0.3",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.8.2"

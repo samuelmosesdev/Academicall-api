@@ -30,6 +30,7 @@ export const CAPABILITIES = [
   { key: "documents.manage", group: "Content", scope: "staff", label: "Manage materials", hint: "Edit, remove and restore materials" },
   { key: "files.center", group: "Content", scope: "staff", label: "Document Center", hint: "See every upload, including deleted ones, and restore them" },
   { key: "courses.manage", group: "Content", scope: "staff", label: "Manage courses", hint: "Create and edit courses" },
+  { key: "academics.manage", group: "Content", scope: "staff", label: "Academic structure", hint: "Edit institutions, faculties, departments and the course catalogue" },
   { key: "cbt.manage", group: "Content", scope: "staff", label: "CBT Builder", hint: "Write and edit practice questions" },
   { key: "announcements.publish", group: "Content", scope: "staff", label: "Announcements", hint: "Publish platform announcements" },
   { key: "feeds.moderate", group: "Content", scope: "staff", label: "Moderate feeds", hint: "Remove posts from department feeds" },
@@ -52,7 +53,7 @@ const ALL_STAFF = CAPABILITIES.filter((c) => c.scope === "staff").map((c) => c.k
 const ALL_SECRETARY = CAPABILITIES.filter((c) => c.scope === "secretary").map((c) => c.key);
 
 export const ROLE_DEFAULTS: Record<string, string[]> = {
-  alphaAgent: ALL_STAFF.filter((k) => k !== "users.delete" && k !== "users.secretary"),
+  alphaAgent: ALL_STAFF.filter((k) => k !== "users.delete" && k !== "users.secretary" && k !== "academics.manage"),
   agent: ["users.view", "documents.review", "documents.manage", "courses.manage", "cbt.manage", "announcements.publish", "feeds.moderate", "requests.review"],
 };
 export const TAG_DEFAULTS: Record<string, string[]> = {
@@ -100,7 +101,7 @@ export function outranks(actor: { id?: string; role?: string | null }, target: {
 export function requireCap(...caps: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
-    if (caps.some((c) => hasCap(req.user!, c))) return next();
+    if (caps.some((c) => hasCap(req.user as any, c))) return next();
     return res.status(403).json({ error: "You don't have access to this. Ask an admin to grant it.", code: "missing_capability", need: caps });
   };
 }

@@ -33,9 +33,6 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => async 
 };
 const take = (req: Request, max = 200) => Math.min(Math.max(Number(req.query.limit) || 60, 1), max);
 const userBrief = { id: true, name: true, email: true, uniqueId: true, role: true, photoUrl: true } as const;
-const jsonObject = (value: Prisma.JsonValue | null): Prisma.JsonObject =>
-  value && typeof value === "object" && !Array.isArray(value) ? value as Prisma.JsonObject : {};
-const jsonString = (value: Prisma.JsonValue | undefined) => typeof value === "string" ? value : null;
 
 async function namesFor(ids: (string | null | undefined)[]) {
   const unique = [...new Set(ids.filter(Boolean) as string[])];
@@ -159,13 +156,13 @@ export const listGroupFiles = handle(async (req, res) => {
   const names = await namesFor(rows.map((r) => r.deletedById));
   res.json({
     files: rows.map((m) => {
-      const arc = jsonObject(m.archive);
+      const arc = (m.archive as any) || {};
       return {
         id: m.id, type: m.type, name: m.attachmentName, mime: m.attachmentMime, size: m.attachmentBytes,
-        url: m.attachmentUrl || jsonString(arc.attachmentUrl), thumbnailUrl: m.thumbnailUrl || jsonString(arc.thumbnailUrl),
+        url: m.attachmentUrl || arc.attachmentUrl || null, thumbnailUrl: m.thumbnailUrl || arc.thumbnailUrl || null,
         group: m.group, sender: m.sender, createdAt: m.createdAt, deletedAt: m.deletedAt,
         deletedBy: m.deletedById ? names.get(m.deletedById) || "Unknown" : null,
-        restorable: !!m.deletedAt && !!jsonString(arc.attachmentUrl),
+        restorable: !!m.deletedAt && !!arc.attachmentUrl,
       };
     }),
   });
@@ -174,12 +171,11 @@ export const listGroupFiles = handle(async (req, res) => {
 export const restoreGroupFile = handle(async (req, res) => {
   const m = await prisma.studyGroupMessage.findUnique({ where: { id: String(req.params.id) }, include: { group: { select: { name: true } } } });
   if (!m) throw new HttpError(404, "File not found");
-  const arc = jsonObject(m.archive);
-  const attachmentUrl = jsonString(arc.attachmentUrl);
-  if (!m.deletedAt || !attachmentUrl) throw new HttpError(400, "This file can't be restored");
+  const arc = (m.archive as any) || null;
+  if (!m.deletedAt || !arc?.attachmentUrl) throw new HttpError(400, "This file can't be restored");
   await prisma.studyGroupMessage.update({
     where: { id: m.id },
-    data: { deletedAt: null, deletedById: null, text: jsonString(arc.text), attachmentUrl, thumbnailUrl: jsonString(arc.thumbnailUrl), archive: Prisma.JsonNull },
+    data: { deletedAt: null, deletedById: null, text: arc.text ?? null, attachmentUrl: arc.attachmentUrl, thumbnailUrl: arc.thumbnailUrl ?? null, archive: Prisma.JsonNull },
   });
   await audit(req.user, "group_file.restore", { id: m.id, label: m.attachmentName }, { group: m.group?.name, senderId: m.senderId });
   res.json({ ok: true });
@@ -187,7 +183,7 @@ export const restoreGroupFile = handle(async (req, res) => {
 
 // ── vault (admins) ───────────────────────────────────────────────────────────
 export const vaultUsers = handle(async (req, res) => {
-  purgeVaultTrash().catch((err) => console.error("[files] Vault trash cleanup failed", err));
+  purgeVaultTrash().catch(() => {});
   const q = String(req.query.q || "").trim();
   const accounts = await prisma.vaultAccount.findMany({
     where: q ? { user: { OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }, { uniqueId: { contains: q, mode: "insensitive" } }] } } : {},
@@ -227,6 +223,7 @@ export const vaultUserFiles = handle(async (req, res) => {
       orderBy: { createdAt: "desc" },
     }),
   ]);
+  await audit(req.user, "vault.browse", { id: userId, label: user.name || user.email }, { files: files.length });
   res.json({
     user,
     trashDays: VAULT_TRASH_DAYS,
@@ -246,31 +243,21 @@ export const restoreVaultFile = handle(async (req, res) => {
     await prisma.vaultFolder.update({ where: { id: file.folderId }, data: { deletedAt: null, name: clash ? `${base} (restored)`.slice(0, 48) : base, originalName: null } });
   }
   await prisma.vaultFile.update({ where: { id: file.id }, data: { deletedAt: null, deletedById: null } });
-  let notificationSent = true;
-  try {
-    await prisma.notification.create({
-      data: { userId: file.userId, createdById: req.user!.id, type: "system", title: "A file was restored to your vault", body: `“${file.name}” is back in your Academicall Vault.`, data: { link: "/dashboard/vault" } },
-    });
-  } catch (err) {
-    notificationSent = false;
-    console.error("[files] Could not notify the vault owner about a restored file", err);
-  }
+  await prisma.notification.create({
+    data: { userId: file.userId, createdById: req.user!.id, type: "system", title: "A file was restored to your vault", body: `“${file.name}” is back in your Academicall Vault.`, data: { link: "/dashboard/vault" } },
+  }).catch(() => {});
   await audit(req.user, "vault.restore", { id: file.userId, label: file.name }, { fileId: file.id });
-  res.json({ ok: true, notificationSent });
+  res.json({ ok: true });
 });
 
 export const openVaultFile = handle(async (req, res) => {
   const { reason } = z.object({ reason: z.string().trim().min(8, "Write down why you need to open this file (at least 8 characters)").max(300) }).parse(req.body || {});
   const file = await prisma.vaultFile.findUnique({ where: { id: String(req.params.id) } });
-  if (!file || file.deletedAt) throw new HttpError(404, "File not found");
+  if (!file) throw new HttpError(404, "File not found");
   const plain = decrypt(file, `${file.userId}:${file.id}`);
-  await audit(req.user, "vault.open", { id: file.userId, label: file.name }, { fileId: file.id, reason });
-  await prisma.notification.create({
-    data: {
-      userId: file.userId, createdById: req.user!.id, type: "system", title: "An admin opened a file in your vault",
-      body: `“${file.name}” was opened by Academicall support. Reason: ${reason}`, data: { link: "/dashboard/vault" },
-    },
-  });
+  // Internal accountability only: the opening is written to the audit trail (who, when, which file, why).
+  // The student is not notified; admin access is governed by the vault.recover capability and this log.
+  await audit(req.user, "vault.open", { id: file.userId, label: file.name }, { fileId: file.id, reason, ip: req.ip });
   res.setHeader("Content-Type", file.mimeType);
   res.setHeader("Content-Length", String(plain.length));
   res.setHeader("Cache-Control", "no-store, private");

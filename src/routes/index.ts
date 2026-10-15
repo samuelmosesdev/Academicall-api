@@ -1,5 +1,10 @@
-import { Router, type RequestHandler } from "express";
+import { Router } from "express";
 import { authenticate, requireAdmin, requireStaff, requireAdminOrAlpha, requireCap } from "../middleware/auth";
+import * as filesCtrl from "../controllers/files.controller";
+import * as secCtrl from "../controllers/secretariat.controller";
+import * as ogCtrl from "../controllers/og.controller";
+import * as myCoursesCtrl from "../controllers/myCourses.controller";
+import * as acadCtrl from "../controllers/academics.controller";
 import * as authCtrl from "../controllers/auth.controller";
 import * as usersCtrl from "../controllers/users.controller";
 import * as docsCtrl from "../controllers/documents.controller";
@@ -10,37 +15,33 @@ import * as requestsCtrl from "../controllers/requests.controller";
 import * as enrollmentsCtrl from "../controllers/enrollments.controller";
 import * as activityCtrl from "../controllers/activity.controller";
 import * as featureCtrl from "../controllers/feature.controller";
-import { classSocial, feedSocial, updateClassEvent } from "../controllers/programme.controller";
 import * as quizzesCtrl from "../controllers/quizzes.controller";
 import * as paymentsCtrl from "../controllers/payments.controller";
-import * as groupsCtrl from "../controllers/groups.controller";
+import departmentRoutes from "./department.routes";
 import * as institutionsCtrl from "../controllers/institutions.controller";
+import * as groupsCtrl from "../controllers/groups.controller";
 import * as realtimeCtrl from "../controllers/realtime.controller";
 import express from "express";
+import { authLimits as L, rateLimit } from "../middleware/rateLimit";
 import * as vaultCtrl from "../controllers/vault.controller";
 import * as newsCtrl from "../controllers/news.controller";
-import departmentRoutes from "./department.routes";
-import * as filesCtrl from "../controllers/files.controller";
-import * as secCtrl from "../controllers/secretariat.controller";
+import { feedSocial, classSocial, updateClassEvent } from "../controllers/programme.controller";
 
 const router = Router();
-const asyncRoute = (handler: RequestHandler): RequestHandler => (req, res, next) => {
-  Promise.resolve(handler(req, res, next)).catch(next);
-};
 
-// Vault uploads are raw encrypted-file inputs, not JSON or multipart payloads.
-const vaultUpload = express.raw({
-  type: "application/octet-stream",
-  limit: `${Math.ceil(vaultCtrl.VAULT_LIMITS.maxFileBytes / (1024 * 1024)) + 1}mb`,
-});
+const userKey = (r: any) => String(r.user?.id || r.ip);
+const vaultUnlockLimit = rateLimit({ name: "vault-unlock", windowMs: 15 * 60_000, max: 12, key: userKey, failuresOnly: true, message: "Too many PIN attempts. Wait a few minutes." });
+const vaultOtpLimit = rateLimit({ name: "vault-otp", windowMs: 60 * 60_000, max: 5, key: userKey, message: "Too many reset codes requested. Try again in an hour." });
+const vaultResetLimit = rateLimit({ name: "vault-reset", windowMs: 15 * 60_000, max: 8, key: userKey, failuresOnly: true });
+const vaultUpload = express.raw({ type: () => true, limit: `${Math.ceil(vaultCtrl.VAULT_LIMITS.maxFileBytes / 1048576) + 1}mb` });
 
-// Academicall Vault
+// Academicall Vault (PIN-locked; data routes need X-Vault-Token)
 router.get("/vault/status", authenticate, vaultCtrl.status);
 router.post("/vault/pin", authenticate, vaultCtrl.createPin);
-router.post("/vault/unlock", authenticate, vaultCtrl.unlock);
-router.post("/vault/pin/change", authenticate, vaultCtrl.changePin);
-router.post("/vault/recovery/send", authenticate, vaultCtrl.sendRecovery);
-router.post("/vault/recovery/reset", authenticate, vaultCtrl.resetWithCode);
+router.post("/vault/unlock", authenticate, vaultUnlockLimit, vaultCtrl.unlock);
+router.post("/vault/pin/change", authenticate, vaultUnlockLimit, vaultCtrl.changePin);
+router.post("/vault/recovery/send", authenticate, vaultOtpLimit, vaultCtrl.sendRecovery);
+router.post("/vault/recovery/reset", authenticate, vaultResetLimit, vaultCtrl.resetWithCode);
 router.get("/vault/folders", authenticate, vaultCtrl.requireVault, vaultCtrl.listFolders);
 router.post("/vault/folders", authenticate, vaultCtrl.requireVault, vaultCtrl.createFolder);
 router.patch("/vault/folders/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.updateFolder);
@@ -51,7 +52,7 @@ router.get("/vault/files/:id/content", authenticate, vaultCtrl.requireVault, vau
 router.patch("/vault/files/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.updateFile);
 router.delete("/vault/files/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.deleteFile);
 
-// Academicall News
+// Academicall News (public reading; sign in to read in full, react and comment)
 router.get("/news", newsCtrl.optionalAuth, newsCtrl.listNews);
 router.get("/news/desk/posts", authenticate, newsCtrl.requireNewsDesk, newsCtrl.deskList);
 router.post("/news/desk/posts", authenticate, newsCtrl.requireNewsDesk, newsCtrl.createPost);
@@ -63,54 +64,51 @@ router.delete("/news/comments/:commentId", authenticate, newsCtrl.deleteComment)
 router.post("/news/:id/reactions", authenticate, newsCtrl.react);
 router.get("/news/:slug", newsCtrl.optionalAuth, newsCtrl.getNews);
 
+// Link previews (public; read by the Firebase Hosting function ogPage)
+router.get("/og/meta", ogCtrl.meta);
+router.get(["/og/image/default.png", "/og/image/default.jpg"], ogCtrl.defaultImage);
+router.get(["/og/image/default-:kind.png", "/og/image/default-:kind.jpg"], ogCtrl.defaultImage);
+router.get("/og/image/news/:slug", ogCtrl.newsImage);
+router.get("/og/image/study/:code", ogCtrl.studyImage);
+
 // Health
 router.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "academicall-api", time: new Date().toISOString() });
 });
 
-// Public academic catalogue (needed during profile completion).
-router.get("/institutions", asyncRoute(institutionsCtrl.listInstitutions));
-router.get("/institutions/:id", asyncRoute(institutionsCtrl.getInstitution));
-router.get("/institutions/:id/tree", asyncRoute(institutionsCtrl.getInstitutionTree));
-router.post("/institutions", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createInstitution));
-router.post("/institutions/:id/faculties", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createFaculty));
-router.post("/faculties/:id/departments", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createDepartment));
-router.post("/academic-departments/:id/programs", authenticate, requireAdmin, asyncRoute(institutionsCtrl.createProgram));
-
-// Long-lived authenticated event stream. All writes remain on REST endpoints.
-router.get("/realtime/stream", authenticate, asyncRoute(realtimeCtrl.stream));
-
 // Paystack webhook (public — verified via signature, not JWT)
 router.post("/payments/webhook/paystack", paymentsCtrl.paystackWebhook);
 
 // Auth (public)
-router.post("/auth/register", authCtrl.register);
-router.post("/auth/login", authCtrl.login);
-router.post("/auth/password/change", authenticate, authCtrl.changePassword);
-router.post("/auth/password-reset/request", authCtrl.requestPasswordReset);
-router.post("/auth/password-reset/confirm", authCtrl.confirmPasswordReset);
-router.post("/auth/google", authCtrl.googleLogin);
+router.post("/auth/register", L.register, authCtrl.register);
+router.post("/auth/login", L.loginPerIp, L.loginPerAccount, authCtrl.login);
+router.post("/auth/password/change", authenticate, L.passwordChange, authCtrl.changePassword);
+router.post("/auth/password-reset/request", L.resetRequestPerIp, L.resetRequestPerEmail, authCtrl.requestPasswordReset);
+router.post("/auth/password-reset/confirm", L.resetConfirm, authCtrl.confirmPasswordReset);
+router.post("/auth/google", L.google, authCtrl.googleLogin);
 router.get("/auth/me", authenticate, authCtrl.me);
-router.post("/auth/verification/send", authenticate, authCtrl.sendVerification);
-router.post("/auth/verification/verify", authenticate, authCtrl.verifyEmail);
+router.post("/auth/verification/send", authenticate, L.verifySend, authCtrl.sendVerification);
+router.post("/auth/verification/verify", authenticate, L.verifyCheck, authCtrl.verifyEmail);
 
 // Users
 router.get("/users/me", authenticate, authCtrl.me);
 router.patch("/users/me", authenticate, usersCtrl.updateMe);
-router.get("/users", authenticate, requireCap("users.view"), usersCtrl.listUsers);
+router.get("/users", authenticate, requireStaff, usersCtrl.listUsers);
 router.get("/users/course-rep-status", authenticate, usersCtrl.courseRepStatus);
 router.post("/users/agents", authenticate, requireCap("staff.manage"), usersCtrl.createAgent);
 router.get("/users/:id", authenticate, requireCap("users.view"), usersCtrl.getUser);
-router.patch("/users/:id", authenticate, requireStaff, usersCtrl.adminUpdateUser);
+router.patch("/users/:id", authenticate, requireStaff, usersCtrl.adminUpdateUser); // field-level checks inside
 router.put("/users/:id/access", authenticate, requireStaff, usersCtrl.updateAccess);
 router.post("/users/:id/reset-password", authenticate, requireCap("users.password"), usersCtrl.adminResetPassword);
 router.post("/users/:id/force-password-change", authenticate, requireCap("users.password"), usersCtrl.forcePasswordChange);
 router.post("/users/:id/sign-out", authenticate, requireCap("users.password"), usersCtrl.revokeSessions);
 router.delete("/users/:id", authenticate, requireCap("users.delete"), usersCtrl.deleteUser);
+
+// Staff access control
 router.get("/access/catalog", authenticate, requireStaff, usersCtrl.accessCatalog);
 router.get("/access/staff", authenticate, requireCap("staff.manage", "users.view"), usersCtrl.listStaffAccess);
 
-// Document Center
+// Document Center (every upload, restorable)
 router.get("/files/summary", authenticate, requireCap("files.center"), filesCtrl.summary);
 router.get("/files/materials", authenticate, requireCap("files.center"), filesCtrl.listMaterials);
 router.post("/files/materials/:id/restore", authenticate, requireCap("files.center"), requireCap("documents.manage"), filesCtrl.restoreMaterial);
@@ -124,6 +122,7 @@ router.post("/files/vault/:userId/unlock", authenticate, requireCap("vault.recov
 router.post("/files/vault-files/:id/restore", authenticate, requireCap("vault.recover"), filesCtrl.restoreVaultFile);
 router.post("/files/vault-files/:id/open", authenticate, requireCap("vault.recover"), filesCtrl.openVaultFile);
 
+// Secretariat
 router.get("/secretariat/overview", authenticate, secCtrl.requireSecretariat, secCtrl.overview);
 router.get("/secretariat/records", authenticate, secCtrl.requireSecretariat, secCtrl.listRecords);
 router.post("/secretariat/records", authenticate, secCtrl.requireSecretariat, secCtrl.createRecord);
@@ -133,7 +132,6 @@ router.delete("/secretariat/records/:id", authenticate, secCtrl.requireSecretari
 router.get("/secretariat/activity", authenticate, secCtrl.requireSecretariat, secCtrl.activityJournal);
 
 // Documents
-router.get("/documents/mine", authenticate, docsCtrl.listMyDocuments);
 router.get("/documents", authenticate, docsCtrl.listDocuments);
 router.get("/documents/:id", authenticate, docsCtrl.getDocument);
 router.post("/documents", authenticate, docsCtrl.createDocument);
@@ -160,6 +158,13 @@ router.delete("/profile-change-requests/:id", authenticate, requireCap("requests
 router.get("/courses", authenticate, coursesCtrl.listCourses);
 router.get("/courses/:id", authenticate, coursesCtrl.getCourse);
 router.post("/courses", authenticate, requireCap("courses.manage"), coursesCtrl.createCourse);
+// A student's own course list + suggestions from their programme's curricula
+router.get("/me/courses", authenticate, myCoursesCtrl.getMyCourses);
+router.get("/me/courses/suggestions", authenticate, myCoursesCtrl.getSuggestions);
+router.post("/me/courses", authenticate, myCoursesCtrl.addMyCourse);
+router.post("/me/courses/bulk", authenticate, myCoursesCtrl.addMyCoursesBulk);
+router.delete("/me/courses/:id", authenticate, myCoursesCtrl.removeMyCourse);
+router.get("/catalog/courses", authenticate, myCoursesCtrl.searchCatalog);
 router.get("/enrollments", authenticate, enrollmentsCtrl.listEnrollments);
 router.post("/enrollments", authenticate, enrollmentsCtrl.createEnrollment);
 router.patch("/enrollments/:id", authenticate, enrollmentsCtrl.updateEnrollment);
@@ -169,7 +174,7 @@ router.post("/activity", authenticate, activityCtrl.createActivity);
 router.post("/activity/:id/revert", authenticate, requireAdminOrAlpha, requireCap("activity.view"), activityCtrl.revertActivity);
 router.get("/questions", authenticate, featureCtrl.listQuestions);
 router.post("/questions", authenticate, requireCap("cbt.manage"), featureCtrl.createQuestion);
-router.post("/questions/from-material", authenticate, requireCap("cbt.manage"), featureCtrl.createQuestionFromMaterial);
+router.post("/questions/from-material", authenticate, featureCtrl.createQuestionFromMaterial);
 router.patch("/questions/:id", authenticate, requireCap("cbt.manage"), featureCtrl.updateQuestion);
 router.delete("/questions/:id", authenticate, requireCap("cbt.manage"), featureCtrl.deleteQuestion);
 router.get("/quizzes/mine", authenticate, quizzesCtrl.listMine);
@@ -226,6 +231,56 @@ router.post("/notifications/fcm-token", authenticate, notifCtrl.registerFcmToken
 router.put("/notifications/fcm-token", authenticate, notifCtrl.registerFcmToken);
 router.delete("/notifications/fcm-token", authenticate, notifCtrl.removeFcmToken);
 
+router.use("/department", departmentRoutes);
+
+// Real-time stream (Server-Sent Events)
+router.get("/realtime/stream", authenticate, realtimeCtrl.stream);
+
+// Institutions → faculties → departments → programmes (public reads: needed before profile setup)
+router.get("/institutions", institutionsCtrl.listInstitutions);
+router.get("/institutions/:id", institutionsCtrl.getInstitution);
+router.get("/institutions/:id/tree", institutionsCtrl.getInstitutionTree);
+router.post("/institutions", authenticate, requireAdmin, institutionsCtrl.createInstitution);
+router.post("/institutions/:id/faculties", authenticate, requireAdmin, institutionsCtrl.createFaculty);
+router.post("/faculties/:id/departments", authenticate, requireAdmin, institutionsCtrl.createDepartment);
+router.post("/academic-departments/:id/programs", authenticate, requireAdmin, institutionsCtrl.createProgram);
+
+// Admin: academic structure + course catalogue
+const acad = [authenticate, requireCap("academics.manage")];
+router.get("/admin/academics/summary", ...acad, acadCtrl.summary);
+router.get("/admin/academics/institutions", ...acad, acadCtrl.listInstitutions);
+router.post("/admin/academics/institutions", ...acad, acadCtrl.createInstitution);
+router.get("/admin/academics/institutions/:id", ...acad, acadCtrl.getInstitution);
+router.patch("/admin/academics/institutions/:id", ...acad, acadCtrl.updateInstitution);
+router.delete("/admin/academics/institutions/:id", ...acad, acadCtrl.deleteInstitution);
+router.get("/admin/academics/institutions/:id/faculties", ...acad, acadCtrl.listFaculties);
+router.post("/admin/academics/institutions/:id/faculties", ...acad, acadCtrl.createFaculty);
+router.patch("/admin/academics/faculties/:id", ...acad, acadCtrl.updateFaculty);
+router.delete("/admin/academics/faculties/:id", ...acad, acadCtrl.deleteFaculty);
+router.get("/admin/academics/faculties/:id/departments", ...acad, acadCtrl.listDepartments);
+router.post("/admin/academics/faculties/:id/departments", ...acad, acadCtrl.createDepartment);
+router.patch("/admin/academics/departments/:id", ...acad, acadCtrl.updateDepartment);
+router.delete("/admin/academics/departments/:id", ...acad, acadCtrl.deleteDepartment);
+router.get("/admin/academics/departments/:id/programmes", ...acad, acadCtrl.listProgrammes);
+router.post("/admin/academics/departments/:id/programmes", ...acad, acadCtrl.createProgramme);
+router.get("/admin/academics/departments/:id/courses", ...acad, acadCtrl.listDepartmentCourses);
+router.post("/admin/academics/departments/:id/courses", ...acad, acadCtrl.assignDepartmentCourse);
+router.delete("/admin/academics/departments/:id/courses/:linkId", ...acad, acadCtrl.unassignDepartmentCourse);
+router.patch("/admin/academics/programmes/:id", ...acad, acadCtrl.updateProgramme);
+router.delete("/admin/academics/programmes/:id", ...acad, acadCtrl.deleteProgramme);
+router.post("/admin/academics/programmes/:id/curricula", ...acad, acadCtrl.linkCurriculum);
+router.delete("/admin/academics/programmes/:id/curricula/:curriculumId", ...acad, acadCtrl.unlinkCurriculum);
+router.get("/admin/academics/courses", ...acad, acadCtrl.listCatalogCourses);
+router.post("/admin/academics/courses", ...acad, acadCtrl.createCatalogCourse);
+router.get("/admin/academics/courses/:id", ...acad, acadCtrl.getCatalogCourse);
+router.patch("/admin/academics/courses/:id", ...acad, acadCtrl.updateCatalogCourse);
+router.post("/admin/academics/courses/:id/archive", ...acad, acadCtrl.archiveCatalogCourse);
+router.post("/admin/academics/courses/:id/restore", ...acad, acadCtrl.archiveCatalogCourse);
+router.delete("/admin/academics/courses/:id", ...acad, acadCtrl.deleteCatalogCourse);
+router.get("/admin/academics/curricula", ...acad, acadCtrl.listCurricula);
+router.get("/admin/academics/curricula/:id", ...acad, acadCtrl.getCurriculum);
+router.patch("/admin/academics/curricula/:id", ...acad, acadCtrl.updateCurriculum);
+
 // Study groups
 router.get("/groups", authenticate, groupsCtrl.listMyGroups);
 router.post("/groups", authenticate, groupsCtrl.createGroup);
@@ -250,7 +305,5 @@ router.get("/groups/:id/messages", authenticate, groupsCtrl.listMessages);
 router.post("/groups/:id/messages", authenticate, groupsCtrl.sendMessage);
 router.delete("/groups/:id/messages/:messageId", authenticate, groupsCtrl.deleteMessage);
 router.post("/groups/:id/messages/:messageId/save", authenticate, groupsCtrl.saveMessageMaterial);
-
-router.use("/department", departmentRoutes);
 
 export default router;

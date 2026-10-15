@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { HttpError } from "../lib/http";
+import { addCourseFor } from "./myCourses.controller";
 
 const enrollmentSchema = z.object({
   courseId: z.string().min(1),
@@ -22,14 +24,17 @@ export async function createEnrollment(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   try {
     const body = enrollmentSchema.parse(req.body);
-    const enrollment = await prisma.enrollment.upsert({
+    // Same rules as POST /me/courses (no duplicate codes, plan limit); re-enrolling just updates progress.
+    const existing = await prisma.enrollment.findFirst({ where: { userId: req.user.id, courseId: body.courseId } });
+    if (!existing) await addCourseFor(req.user.id, { courseId: body.courseId });
+    const enrollment = await prisma.enrollment.update({
       where: { userId_courseId: { userId: req.user.id, courseId: body.courseId } },
-      create: { ...body, userId: req.user.id },
-      update: { ...body },
+      data: { progressPct: body.progressPct, topicLabel: body.topicLabel },
       include: { course: true },
     });
-    res.status(201).json({ enrollment });
+    res.status(existing ? 200 : 201).json({ enrollment });
   } catch (err) {
+    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code });
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
     res.status(500).json({ error: "Enrollment failed" });
   }
