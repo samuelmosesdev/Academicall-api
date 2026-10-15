@@ -934,7 +934,7 @@ async function main() {
 
     await test("CORS: production only allows the live site and the Android app", async () => {
       const prod = spawn("node", ["dist/server.js"], {
-        env: { ...process.env, PORT: "4101", JWT_SECRET: SECRET, AUTO_SEED_INSTITUTIONS: "false", NODE_ENV: "production", CORS_ORIGIN: "" },
+        env: { ...process.env, PORT: "4101", JWT_SECRET: SECRET, AUTO_SEED_INSTITUTIONS: "false", NODE_ENV: "production", CORS_ORIGIN: "https://academicall.site,http://localhost:5173" },
         stdio: ["ignore", "ignore", "inherit"],
       });
       try {

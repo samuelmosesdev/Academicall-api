@@ -13,10 +13,18 @@ const allowedOrigins = configuredOrigins?.length
   : ["https://academicall.site", "https://localhost"];
 const isLocalOrigin = (origin: string) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-const isAllowedOrigin = (origin: string | undefined) =>
-  !origin ||
-  (process.env.NODE_ENV !== "production" && isLocalOrigin(origin)) ||
-  allowedOrigins.includes(origin);
+const isLocalDevelopmentOrigin = (origin: string) =>
+  isLocalOrigin(origin) && origin !== "https://localhost";
+const isAllowedOrigin = (origin: string | undefined) => {
+  if (!origin) return true;
+  if (process.env.NODE_ENV !== "production") {
+    return isLocalOrigin(origin) || allowedOrigins.includes(origin);
+  }
+  return (
+    origin === "https://localhost" ||
+    (!isLocalDevelopmentOrigin(origin) && allowedOrigins.includes(origin))
+  );
+};
 
 app.use(
   helmet({
