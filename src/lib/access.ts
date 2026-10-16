@@ -5,6 +5,8 @@
  *  - Duties ("staffTags") are add-ons any user can hold on top of their role:
  *      news       → writes and publishes Academicall News
  *      secretary  → runs the Secretariat
+ *      newsChief  → Chief News Agent: oversees every story and every News Agent (admin assigns)
+ *      houseLeader→ runs one or more Aspirant Houses (admin picks the houses)
  *  - Capabilities are the switches the admin flips per person. A person with
  *    no saved list gets the defaults for their role and duties. Admins always
  *    hold every capability and can't be restricted.
@@ -24,7 +26,13 @@ export const CAPABILITIES = [
   { key: "users.courseRep", group: "People", scope: "staff", label: "Assign Course Reps", hint: "Make or remove Course Reps" },
   { key: "users.news", group: "People", scope: "staff", label: "Assign News duty", hint: "Give or remove the News Agent duty" },
   { key: "users.secretary", group: "People", scope: "staff", label: "Assign Secretary duty", hint: "Give or remove the Secretary duty" },
+  { key: "users.houseLeader", group: "People", scope: "staff", label: "Assign House Leaders", hint: "Make people House Leaders and choose the houses they run" },
   { key: "users.delete", group: "People", scope: "staff", label: "Delete accounts", hint: "Close accounts below their rank" },
+  // Aspirants
+  { key: "aspirants.view", group: "Aspirants", scope: "staff", label: "View aspirants", hint: "See aspirants, their institutions of choice and details" },
+  { key: "aspirants.manage", group: "Aspirants", scope: "staff", label: "Manage aspirants", hint: "Edit choices, suspend or reactivate aspirant accounts" },
+  { key: "houses.manage", group: "Aspirants", scope: "staff", label: "Manage houses", hint: "Edit Aspirant Houses and moderate any house" },
+  { key: "board.manage", group: "Content", scope: "staff", label: "Dashboard board", hint: "Choose the messages, images and slides on the student dashboard" },
   // Content
   { key: "documents.review", group: "Content", scope: "staff", label: "Review materials", hint: "Approve or reject uploaded materials" },
   { key: "documents.manage", group: "Content", scope: "staff", label: "Manage materials", hint: "Edit, remove and restore materials" },
@@ -53,13 +61,13 @@ const ALL_STAFF = CAPABILITIES.filter((c) => c.scope === "staff").map((c) => c.k
 const ALL_SECRETARY = CAPABILITIES.filter((c) => c.scope === "secretary").map((c) => c.key);
 
 export const ROLE_DEFAULTS: Record<string, string[]> = {
-  alphaAgent: ALL_STAFF.filter((k) => k !== "users.delete" && k !== "users.secretary" && k !== "academics.manage"),
+  alphaAgent: ALL_STAFF.filter((k) => !["users.delete", "users.secretary", "academics.manage", "users.houseLeader", "houses.manage", "board.manage"].includes(k)),
   agent: ["users.view", "documents.review", "documents.manage", "courses.manage", "cbt.manage", "announcements.publish", "feeds.moderate", "requests.review"],
 };
 export const TAG_DEFAULTS: Record<string, string[]> = {
   secretary: ["secretariat.records", "secretariat.activity"],
 };
-export const TAGS = ["news", "secretary"] as const;
+export const TAGS = ["news", "secretary", "newsChief", "houseLeader"] as const;
 
 const RANK: Record<string, number> = { admin: 4, alphaAgent: 3, agent: 2 };
 export const rank = (role?: string | null) => RANK[role || ""] || 1;
@@ -106,8 +114,15 @@ export function requireCap(...caps: string[]) {
   };
 }
 
-export const canWriteNews = (who?: { role?: string | null; staffTags?: string[] | null } | null) =>
-  !!who && (who.role === "admin" || (who.staffTags || []).includes("news"));
+type Tagged = { role?: string | null; staffTags?: string[] | null } | null | undefined;
+export const canWriteNews = (who?: Tagged) =>
+  !!who && (who.role === "admin" || (who.staffTags || []).includes("news") || (who.staffTags || []).includes("newsChief"));
+
+/** Chief News Agent (or admin): oversees every story and every News Agent. */
+export const isNewsChief = (who?: Tagged) => !!who && (who.role === "admin" || (who.staffTags || []).includes("newsChief"));
+
+/** Holds the House Leader duty (which houses they lead is in aspirant_house_leaders). */
+export const isHouseLeader = (who?: Tagged) => !!who && (who.staffTags || []).includes("houseLeader");
 
 export const isSecretary = (who?: { role?: string | null; staffTags?: string[] | null } | null) =>
   !!who && (who.role === "admin" || (who.staffTags || []).includes("secretary"));

@@ -17,6 +17,8 @@ const USER_LIST_SELECT = {
 
 const GROUPS: Record<string, any> = {
   students: { role: "user" },
+  aspirants: { role: "aspirant" },
+  houseLeaders: { staffTags: { has: "houseLeader" } },
   courseReps: { role: "courseRep" },
   news: { staffTags: { has: "news" } },
   secretaries: { staffTags: { has: "secretary" } },
@@ -378,7 +380,7 @@ export async function updateMe(req: Request, res: Response) {
 }
 
 const adminUpdateSchema = z.object({
-  role: z.enum(["admin", "alphaAgent", "agent", "courseRep", "newsAgent", "user"]).optional(),
+  role: z.enum(["admin", "alphaAgent", "agent", "courseRep", "newsAgent", "user", "aspirant"]).optional(),
   plan: z.enum(["free", "pro", "annual"]).optional(),
   status: z.enum(["active", "suspended", "deleted"]).optional(),
   name: z.string().optional(),
@@ -621,7 +623,7 @@ export async function accessCatalog(_req: Request, res: Response) {
 }
 
 const accessSchema = z.object({
-  tags: z.object({ news: z.boolean().optional(), secretary: z.boolean().optional() }).optional(),
+  tags: z.object({ news: z.boolean().optional(), secretary: z.boolean().optional(), newsChief: z.boolean().optional(), houseLeader: z.boolean().optional() }).optional(),
   /** null = back to the defaults for their role and duties */
   permissions: z.array(z.string()).nullable().optional(),
 });
@@ -642,9 +644,17 @@ export async function updateAccess(req: Request, res: Response) {
     let tags = [...(target.staffTags || [])];
     for (const [tag, on] of Object.entries(body.tags || {})) {
       if (on === undefined) continue;
-      const cap = tag === "news" ? "users.news" : "users.secretary";
+      if (tag === "newsChief") {
+        if (actor.role !== "admin") return res.status(403).json({ error: "Only admins appoint the Chief News Agent" });
+        if (target.role === "aspirant") return res.status(400).json({ error: "Aspirants can't hold staff duties" });
+        // The chief is also a News Agent.
+        tags = on ? [...new Set([...tags, "newsChief", "news"])] : tags.filter((t) => t !== "newsChief");
+        continue;
+      }
+      const cap = tag === "news" ? "users.news" : tag === "houseLeader" ? "users.houseLeader" : "users.secretary";
       if (!hasCap(actor, cap)) return res.status(403).json({ error: `You need the "${cap}" permission for that` });
-      tags = on ? [...new Set([...tags, tag])] : tags.filter((t) => t !== tag);
+      if (on && target.role === "aspirant") return res.status(400).json({ error: "Aspirants can't hold staff duties" });
+      tags = on ? [...new Set([...tags, tag])] : tags.filter((t) => t !== tag && !(tag === "news" && t === "newsChief"));
     }
     const data: Prisma.UserUpdateInput = { staffTags: tags };
     if (body.permissions !== undefined) {
@@ -657,6 +667,10 @@ export async function updateAccess(req: Request, res: Response) {
       data.permissions = list;
     }
     const user = await prisma.user.update({ where: { id: target.id }, data, select: { id: true, role: true, staffTags: true, permissions: true } });
+    // Dropping the House Leader duty ends every house they led.
+    if ((target.staffTags || []).includes("houseLeader") && !tags.includes("houseLeader")) {
+      await prisma.aspirantHouseLeader.deleteMany({ where: { userId: target.id } });
+    }
     if (tags.join() !== (target.staffTags || []).join()) await audit(actor, "duty.change", { id: target.id, label: target.name || target.email }, { from: target.staffTags, to: tags });
     if (body.permissions !== undefined) await audit(actor, "permissions.change", { id: target.id, label: target.name || target.email }, { permissions: body.permissions });
     res.json({ user: { ...user, capabilities: effectiveCaps(user), defaultCapabilities: defaultCaps(user), grantableCapabilities: grantable(user), customPermissions: Array.isArray(user.permissions) } });

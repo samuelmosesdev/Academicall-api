@@ -14,6 +14,8 @@ enum Role {
   courseRep
   newsAgent
   user
+  /// Prospective student seeking admission (UTME / Post-UTME candidate)
+  aspirant
 }
 
 enum Plan {
@@ -37,6 +39,8 @@ enum NotificationType {
   new_student
   lecture_update
   announcement_published
+  house
+  news
 }
 
 model User {
@@ -106,6 +110,14 @@ model User {
   permissions                Json?
   /// Tokens issued before this moment are rejected (force sign-out)
   sessionsRevokedAt          DateTime?
+  /// Aspirant extras: { utmeYear, utmeScore, stateOfOrigin, jambRegNo }
+  aspirantMeta               Json?
+  /// Newsroom standing, set by a Chief News Agent: active | restricted (needs approval) | suspended
+  newsStatus                 String       @default("active")
+  newsStatusReason           String?
+  newsStatusAt               DateTime?
+  /// Get alerts for stories publishers aim at people like you
+  newsAlerts                 Boolean      @default(true)
   createdAt                  DateTime     @default(now())
   updatedAt                  DateTime     @updatedAt
 
@@ -132,6 +144,12 @@ model User {
   newsComments          NewsComment[]
   newsReactions         NewsReaction[]
   secretariatRecords    SecretariatRecord[]    @relation("SecretariatAuthor")
+  aspirations           Aspiration[]
+  houseMemberships      AspirantHouseMember[]
+  houseLeads            AspirantHouseLeader[]
+  houseThreads          HouseThread[]          @relation("HouseThreadAuthor")
+  houseReplies          HouseReply[]           @relation("HouseReplyAuthor")
+  newsSubscriptions     NewsSubscription[]
 
   @@index([role])
   @@index([department])
@@ -181,7 +199,7 @@ model Document {
 }
 
 model Course {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   title        String
   code         String?
   faculty      String?
@@ -192,17 +210,17 @@ model Course {
   thumbnailUrl String?
   category     String?
   source       String?
-  published    Boolean  @default(true)
+  published    Boolean   @default(true)
   approvedBy   String?
   requestedBy  String?
   /// Credit units from the national curriculum, when known
   units        Int?
   /// "CODE|title" (upper-cased) for courses imported from the national curricula; null for hand-made ones
-  catalogKey   String?  @unique
+  catalogKey   String?   @unique
   /// Set when an admin retires a course; it stays on existing student lists but stops being suggested
   archivedAt   DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   documents         Document[]
   enrollments       Enrollment[]
@@ -674,6 +692,8 @@ model Institution {
   faculties   Faculty[]
   users       User[]
   studyGroups StudyGroup[]
+  aspirations Aspiration[]
+  house       AspirantHouse?
 
   @@unique([name, abbreviation])
   @@index([name])
@@ -887,23 +907,31 @@ model VaultFile {
 
 // ── Academicall News ──────────────────────────────────────────────────────────
 model NewsPost {
-  id           String         @id @default(uuid())
-  slug         String         @unique
-  title        String
-  excerpt      String?
-  body         String
-  coverUrl     String?
-  category     String         @default("Campus")
-  status       String         @default("draft") // draft | published
-  authorId     String?
-  author       User?          @relation("NewsAuthor", fields: [authorId], references: [id], onDelete: SetNull)
-  publishedAt  DateTime?
-  viewCount    Int            @default(0)
-  commentCount Int            @default(0)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  comments     NewsComment[]
-  reactions    NewsReaction[]
+  id             String         @id @default(uuid())
+  slug           String         @unique
+  title          String
+  excerpt        String?
+  body           String
+  coverUrl       String?
+  category       String         @default("Campus")
+  status         String         @default("draft") // draft | review | published | hidden
+  /// Topic tags readers can subscribe to
+  tags           String[]       @default([])
+  /// Who the publisher aimed it at: { groups: ["students","aspirants","staff"], institutionIds: [], levels: [] }.
+  /// Everyone still sees it on the news page; the audience gets it first.
+  audience       Json?
+  moderationNote String?
+  moderatedById  String?
+  moderatedAt    DateTime?
+  authorId       String?
+  author         User?          @relation("NewsAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  publishedAt    DateTime?
+  viewCount      Int            @default(0)
+  commentCount   Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  comments       NewsComment[]
+  reactions      NewsReaction[]
 
   @@index([status, publishedAt])
   @@index([category])
@@ -1034,4 +1062,165 @@ model DepartmentCourse {
   @@unique([departmentId, courseId])
   @@index([courseId])
   @@map("department_courses")
+}
+
+// ── Aspirants ─────────────────────────────────────────────────────────────────
+/// An aspirant's institution of choice: rank 1 (first choice, required) or 2 (second, optional).
+model Aspiration {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rank          Int // 1 | 2
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  course        String? // the course they hope to study there
+  programId     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([userId, rank])
+  @@unique([userId, institutionId])
+  @@index([institutionId])
+  @@map("aspirations")
+}
+
+/// One house per institution. Every aspirant who chose that institution is a member.
+model AspirantHouse {
+  id            String                @id @default(uuid())
+  institutionId String                @unique
+  institution   Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  name          String
+  motto         String?
+  coverUrl      String?
+  rules         String?
+  memberCount   Int                   @default(0)
+  threadCount   Int                   @default(0)
+  lastThreadAt  DateTime?
+  archived      Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  members       AspirantHouseMember[]
+  leaders       AspirantHouseLeader[]
+  threads       HouseThread[]
+
+  @@index([memberCount])
+  @@map("aspirant_houses")
+}
+
+model AspirantHouseMember {
+  id         String        @id @default(uuid())
+  houseId    String
+  house      AspirantHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  choiceRank Int? // 1 or 2
+  status     String        @default("active") // active | muted | removed
+  reason     String?
+  statusById String?
+  joinedAt   DateTime      @default(now())
+  lastReadAt DateTime?
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([houseId, userId])
+  @@index([userId, status])
+  @@index([houseId, status])
+  @@map("aspirant_house_members")
+}
+
+/// House Leaders: people the admin picked (students or agents) to run a house.
+model AspirantHouseLeader {
+  houseId      String
+  house        AspirantHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedById String?
+  createdAt    DateTime      @default(now())
+
+  @@id([houseId, userId])
+  @@index([userId])
+  @@map("aspirant_house_leaders")
+}
+
+/// Only House Leaders start threads. Members reply.
+model HouseThread {
+  id          String        @id @default(uuid())
+  houseId     String
+  house       AspirantHouse @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  authorId    String?
+  author      User?         @relation("HouseThreadAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  title       String
+  body        String
+  imageUrl    String?
+  mentions    String[]      @default([])
+  pinned      Boolean       @default(false)
+  pinnedAt    DateTime?
+  locked      Boolean       @default(false)
+  replyCount  Int           @default(0)
+  lastReplyAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  replies     HouseReply[]
+
+  @@index([houseId, pinned, createdAt])
+  @@map("house_threads")
+}
+
+model HouseReply {
+  id          String      @id @default(uuid())
+  threadId    String
+  thread      HouseThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  authorId    String?
+  author      User?       @relation("HouseReplyAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body        String
+  imageUrl    String?
+  mentions    String[]    @default([])
+  deletedAt   DateTime?
+  deletedById String?
+  createdAt   DateTime    @default(now())
+
+  @@index([threadId, createdAt])
+  @@map("house_replies")
+}
+
+// ── Student dashboard board ───────────────────────────────────────────────────
+/// Slides on the student dashboard, curated by admins and agents with "board.manage".
+/// kind "message" shows text over a background; kind "image" is a full-bleed design with no text.
+model DashboardSlide {
+  id            String    @id @default(uuid())
+  kind          String    @default("message") // message | image
+  title         String?
+  body          String?
+  imageUrl      String?
+  ctaLabel      String?
+  ctaUrl        String?
+  theme         String    @default("midnight") // midnight | violet | lemon | aqua
+  audience      String    @default("students") // students | aspirants | all
+  active        Boolean   @default(true)
+  sortOrder     Int       @default(0)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([active, sortOrder])
+  @@map("dashboard_slides")
+}
+
+// ── News subscriptions ────────────────────────────────────────────────────────
+/// kind: category | topic | author | institution. New stories that match are delivered as they drop.
+model NewsSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  value     String
+  label     String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, kind, value])
+  @@index([kind, value])
+  @@map("news_subscriptions")
 }

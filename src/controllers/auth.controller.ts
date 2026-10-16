@@ -88,6 +88,8 @@ const registerSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
   password: z.string().min(6),
   name: z.string().optional(),
+  /** "aspirant" for people still seeking admission; they pick institutions of choice next */
+  accountType: z.enum(["student", "aspirant"]).optional(),
 });
 
 const loginSchema = z.object({
@@ -116,7 +118,7 @@ export async function register(req: Request, res: Response) {
         email: body.email,
         passwordHash,
         name: body.name || body.email.split("@")[0],
-        role: "user",
+        role: body.accountType === "aspirant" ? "aspirant" : "user",
         plan: "free",
         uniqueId: null,
       },
@@ -475,6 +477,13 @@ export async function me(req: Request, res: Response) {
         mustChangePassword: true,
         staffTags: true,
         permissions: true,
+        aspirantMeta: true,
+        newsStatus: true,
+        newsAlerts: true,
+        aspirations: {
+          orderBy: { rank: "asc" },
+          select: { rank: true, course: true, programId: true, institutionId: true, institution: { select: { id: true, name: true, displayName: true, abbreviation: true, state: true } } },
+        },
       },
     });
 

@@ -922,6 +922,195 @@ async function main() {
       assert.equal((await call(sec.token, "DELETE", `/secretariat/records/${a.data.record.id}`)).status, 200);
     });
 
+    // ── aspirants, houses, board, newsroom ──────────────────────────────────
+    {
+    console.log("\nAspirants & houses");
+    const insts = (await call(null, "GET", "/institutions?limit=3")).data.institutions;
+    const [instA, instB] = [insts[0].id, insts[1].id];
+    const admin = await makeUser({ role: "admin", name: "Admin Ada" });
+    let asp, asp2, leader, houseA, threadId;
+    await test("aspirant: signs up as an aspirant account", async () => {
+      const email = `asp${Date.now()}@test.academicall`;
+      const r = await call(null, "POST", "/auth/register", { email, password: "secret123", name: "Ada Aspirant", accountType: "aspirant" });
+      assert.equal(r.status, 201);
+      assert.equal(r.data.user.role, "aspirant");
+      const row = await prisma.user.findUnique({ where: { email } });
+      asp = { ...row, token: jwt.sign({ sub: row.id, email, role: row.role }, SECRET) };
+    });
+    await test("aspirant: picks first and second choice and joins both houses", async () => {
+      const r = await call(asp.token, "PUT", "/aspirant/me", { firstChoice: { institutionId: instA, course: "Medicine and Surgery" }, secondChoice: { institutionId: instB, course: "Nursing" }, phone: "08030000000", meta: { utmeYear: 2026, utmeScore: 287, stateOfOrigin: "Kogi" } });
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      assert.equal(r.data.houses.length, 2);
+      assert.equal(r.data.houses[0].choiceRank, 1);
+      houseA = r.data.houses.find((h) => h.institution.id === instA).id;
+      const me = (await call(asp.token, "GET", "/auth/me")).data.user;
+      assert.equal(me.profileComplete, true);
+      assert.equal(me.aspirations.length, 2);
+    });
+    await test("aspirant: the same institution can't be both choices; max two", async () => {
+      const r = await call(asp.token, "PUT", "/aspirant/me", { firstChoice: { institutionId: instA }, secondChoice: { institutionId: instA } });
+      assert.equal(r.status, 400);
+    });
+    await test("aspirant: a new account (Google sign-up) can become an aspirant during setup", async () => {
+      const fresh = await makeUser({ role: "user", profileComplete: false, institutionId: null, program: null });
+      const r = await call(fresh.token, "PUT", "/aspirant/me", { firstChoice: { institutionId: instA } });
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      const row = await prisma.user.findUnique({ where: { id: fresh.id } });
+      assert.equal(row.role, "aspirant");
+      asp2 = { ...row, token: jwt.sign({ sub: row.id, email: row.email, role: row.role }, SECRET) };
+      const done = await makeUser({ profileComplete: true });
+      assert.equal((await call(done.token, "PUT", "/aspirant/me", { firstChoice: { institutionId: instA } })).status, 403);
+    });
+    await test("house: aspirants read but can't start threads", async () => {
+      assert.equal((await call(asp.token, "GET", `/houses/${houseA}`)).status, 200);
+      const r = await call(asp.token, "POST", `/houses/${houseA}/threads`, { title: "Hello all", body: "hi" });
+      assert.equal(r.status, 403);
+      const outsider = await makeUser();
+      assert.equal((await call(outsider.token, "GET", `/houses/${houseA}`)).status, 404);
+    });
+    await test("house: admin makes a student House Leader of a house (duty added)", async () => {
+      leader = await makeUser({ name: "Lola Leader" });
+      const r = await call(admin.token, "POST", `/admin/houses/${houseA}/leaders`, { userId: leader.id });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      const row = await prisma.user.findUnique({ where: { id: leader.id } });
+      assert.ok(row.staffTags.includes("houseLeader"));
+      const mine = (await call(leader.token, "GET", "/houses")).data;
+      assert.equal(mine.leading[0].id, houseA);
+      const notLeader = await call(asp.token, "POST", `/admin/houses/${houseA}/leaders`, { userId: asp.id });
+      assert.equal(notLeader.status, 403);
+      assert.equal((await call(admin.token, "POST", `/admin/houses/${houseA}/leaders`, { userId: asp.id })).status, 400);
+    });
+    await test("house: leader starts a thread mentioning a member; members are notified", async () => {
+      const r = await call(leader.token, "POST", `/houses/${houseA}/threads`, { title: "Post-UTME screening dates", body: `Hi @[Ada Aspirant](user:${asp.id}), screening starts Monday. Everyone bring your slip.` });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      threadId = r.data.thread.id;
+      const n1 = await prisma.notification.findMany({ where: { userId: asp.id, type: "house" } });
+      assert.ok(n1.some((n) => n.data?.mention), "mention notification");
+      const n2 = await prisma.notification.findMany({ where: { userId: asp2.id, type: "house" } });
+      assert.ok(n2.some((n) => n.title.includes("Post-UTME")), "thread notification");
+    });
+    await test("house: members reply; their mention tokens don't ping anyone", async () => {
+      const r = await call(asp2.token, "POST", `/houses/${houseA}/threads/${threadId}/replies`, { body: `Thanks @[Ada Aspirant](user:${asp.id})!` });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      assert.equal(r.data.reply.body, "Thanks @Ada Aspirant!");
+      const t = (await call(asp.token, "GET", `/houses/${houseA}/threads/${threadId}`)).data;
+      assert.equal(t.replies.length, 1);
+      assert.equal(t.thread.replyCount, 1);
+    });
+    await test("house: pinning puts the post on the aspirant dashboard", async () => {
+      assert.equal((await call(leader.token, "PATCH", `/houses/${houseA}/threads/${threadId}`, { pinned: true })).status, 200);
+      const me = (await call(asp.token, "GET", "/aspirant/me")).data;
+      assert.equal(me.pinned[0].id, threadId);
+      const list = (await call(asp.token, "GET", `/houses/${houseA}/threads`)).data;
+      assert.equal(list.pinned[0].id, threadId);
+    });
+    await test("house: leader mutes, restores and removes members", async () => {
+      const members = (await call(leader.token, "GET", `/houses/${houseA}/members`)).data;
+      assert.ok(members.members.some((m) => m.userId === asp2.id && m.choices.length >= 1));
+      assert.equal((await call(asp.token, "GET", `/houses/${houseA}/members`)).status, 403);
+      assert.equal((await call(leader.token, "PATCH", `/houses/${houseA}/members/${asp2.id}`, { status: "muted", reason: "Spam" })).status, 200);
+      assert.equal((await call(asp2.token, "POST", `/houses/${houseA}/threads/${threadId}/replies`, { body: "again" })).status, 403);
+      assert.equal((await call(asp2.token, "GET", `/houses/${houseA}/threads`)).status, 200);
+      await call(leader.token, "PATCH", `/houses/${houseA}/members/${asp2.id}`, { status: "removed" });
+      assert.equal((await call(asp2.token, "GET", `/houses/${houseA}`)).status, 403);
+      // Re-saving choices doesn't undo a removal.
+      await call(asp2.token, "PUT", "/aspirant/me", { firstChoice: { institutionId: instA } });
+      assert.equal((await call(asp2.token, "GET", `/houses/${houseA}`)).status, 403);
+    });
+    await test("admin: lists aspirants with choices; needs the aspirants permission", async () => {
+      const r = await call(admin.token, "GET", `/admin/aspirants?institutionId=${instA}&q=Ada`);
+      assert.equal(r.status, 200);
+      const row = r.data.aspirants.find((a) => a.id === asp.id);
+      assert.ok(row && row.choices[0].course === "Medicine and Surgery" && row.aspirantMeta.utmeScore === 287);
+      const agent = await makeUser({ role: "agent" });
+      assert.equal((await call(agent.token, "GET", "/admin/aspirants")).status, 403);
+      const s = await call(admin.token, "PATCH", `/admin/aspirants/${asp2.id}`, { status: "suspended" });
+      assert.equal(s.status, 200);
+      assert.equal((await call(asp2.token, "GET", "/aspirant/me")).status, 401);
+    });
+
+    console.log("\nDashboard board");
+    await test("board: only board.manage can curate; students see live slides, aspirants their own", async () => {
+      const agent = await makeUser({ role: "agent" });
+      assert.equal((await call(agent.token, "POST", "/admin/board/slides", { kind: "message", title: "x" })).status, 403);
+      assert.equal((await call(admin.token, "POST", "/admin/board/slides", { kind: "image" })).status, 400);
+      const a = await call(admin.token, "POST", "/admin/board/slides", { kind: "message", title: "Exams start 3 Nov", body: "Check your timetable", audience: "students" });
+      assert.equal(a.status, 201, JSON.stringify(a.data));
+      const b = await call(admin.token, "POST", "/admin/board/slides", { kind: "image", imageUrl: "https://res.cloudinary.com/demo/image/upload/sample.jpg", audience: "aspirants" });
+      assert.equal(b.status, 201);
+      await call(admin.token, "PUT", "/admin/board/settings", { backgroundUrl: "https://res.cloudinary.com/demo/image/upload/bg.jpg", intervalSec: 6 });
+      const student = await makeUser();
+      const sb = (await call(student.token, "GET", "/board")).data;
+      assert.ok(sb.slides.some((s) => s.id === a.data.slide.id) && !sb.slides.some((s) => s.id === b.data.slide.id));
+      assert.equal(sb.settings.intervalSec, 6);
+      const ab = (await call(asp.token, "GET", "/board")).data;
+      assert.ok(ab.slides.some((s) => s.id === b.data.slide.id));
+      await prisma.dashboardSlide.deleteMany({ where: { id: { in: [a.data.slide.id, b.data.slide.id] } } });
+    });
+
+    console.log("\nNewsroom");
+    const chief = await makeUser({ name: "Chief Chi" });
+    const writer = await makeUser({ name: "Wale Writer", staffTags: ["news"] });
+    const reader = await makeUser({ name: "Reader Rita" });
+    let reviewId;
+    await test("chief: only admins appoint the Chief News Agent (gets News duty too)", async () => {
+      const alpha = await makeUser({ role: "alphaAgent" });
+      assert.equal((await call(alpha.token, "PUT", `/users/${chief.id}/access`, { tags: { newsChief: true } })).status, 403);
+      const r = await call(admin.token, "PUT", `/users/${chief.id}/access`, { tags: { newsChief: true } });
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      assert.deepEqual([...r.data.user.staffTags].sort(), ["news", "newsChief"]);
+    });
+    await test("chief: restricts a writer, whose publish goes to review; approving delivers to subscribers", async () => {
+      assert.equal((await call(reader.token, "POST", "/news/subscriptions", { kind: "category", value: "Admissions" })).status, 201);
+      assert.equal((await call(chief.token, "PATCH", `/news/chief/agents/${writer.id}`, { newsStatus: "restricted", reason: "New writer" })).status, 200);
+      const r = await call(writer.token, "POST", "/news/desk/posts", { title: "UNIABUJA admission list is out", body: "The first batch of the admission list for the 2026/2027 session has been released on the portal. Candidates should check their status today.", category: "Admissions", status: "published", tags: ["admission list"] });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      assert.equal(r.data.post.status, "review");
+      reviewId = r.data.post.id;
+      const ov = (await call(chief.token, "GET", "/news/chief/overview")).data;
+      assert.ok(ov.review.some((p) => p.id === reviewId));
+      assert.equal((await call(writer.token, "GET", "/news/chief/overview")).status, 403);
+      const ok = await call(chief.token, "PATCH", `/news/chief/posts/${reviewId}`, { action: "approve" });
+      assert.equal(ok.data.post.status, "published");
+      const n = await prisma.notification.findMany({ where: { userId: reader.id, type: "news" } });
+      assert.ok(n.some((x) => x.title.includes("admission list")), "subscriber notified");
+    });
+    await test("search: forgives typos, completes words and suggests stories", async () => {
+      const typo = (await call(null, "GET", "/news?q=admision%20lst")).data;
+      assert.ok(typo.posts.some((p) => p.id === reviewId), JSON.stringify(typo).slice(0, 300));
+      const syn = (await call(null, "GET", "/news?q=uniabuja%20admitted")).data;
+      assert.ok(syn.posts.some((p) => p.id === reviewId));
+      const s = (await call(null, "GET", "/news/suggest?q=admi")).data;
+      assert.ok(s.stories.some((p) => p.id === reviewId));
+      assert.ok(s.terms.length > 0);
+    });
+    await test("chief: suspends a writer, takes a story down and removes the duty", async () => {
+      await call(chief.token, "PATCH", `/news/chief/agents/${writer.id}`, { newsStatus: "suspended", reason: "Plagiarism" });
+      const r = await call(writer.token, "POST", "/news/desk/posts", { title: "Another story here", body: "x".repeat(100), category: "Campus", status: "draft" });
+      assert.equal(r.status, 403);
+      assert.equal((await call(chief.token, "PATCH", `/news/chief/posts/${reviewId}`, { action: "hide", note: "Unverified" })).data.post.status, "hidden");
+      const list = (await call(null, "GET", "/news?category=Admissions")).data;
+      assert.ok(!list.posts.some((p) => p.id === reviewId));
+      assert.equal((await call(chief.token, "DELETE", `/news/chief/agents/${writer.id}/duty`)).status, 200);
+      const row = await prisma.user.findUnique({ where: { id: writer.id } });
+      assert.ok(!row.staffTags.includes("news"));
+      assert.equal((await call(chief.token, "DELETE", `/news/chief/posts/${reviewId}`, { reason: "gone" })).status, 200);
+    });
+    await test("audience: stories aimed at aspirants reach them first, everyone can still read", async () => {
+      const r = await call(chief.token, "POST", "/news/desk/posts", { title: "Post-UTME forms open at your first choice", body: "Forms for the post-UTME screening exercise are now on sale. Candidates who chose the institution as first choice should register before the deadline.", category: "Exams", status: "published", audience: { groups: ["aspirants"], institutionIds: [instA] } });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      const fy = (await call(asp.token, "GET", "/news/for-you")).data;
+      const hit = fy.posts.find((p) => p.id === r.data.post.id);
+      assert.ok(hit && /aspirants/i.test(hit.reason));
+      const n = await prisma.notification.findMany({ where: { userId: asp.id, type: "news" } });
+      assert.ok(n.length >= 1);
+      const pub = (await call(null, "GET", "/news")).data;
+      assert.ok(pub.posts.some((p) => p.id === r.data.post.id));
+      const fyStudent = (await call(reader.token, "GET", "/news/for-you")).data;
+      assert.ok(!fyStudent.posts.some((p) => p.id === r.data.post.id));
+    });
+
+    }
     // ── security: CORS + auth rate limits ───────────────────────────────────
     await test("CORS: unknown origins are refused, the dev server is allowed outside production", async () => {
       const bad = await fetch(API + "/health", { headers: { Origin: "https://evil.example" } });
@@ -988,6 +1177,7 @@ async function main() {
     await prisma.$executeRawUnsafe(`DELETE FROM "activity_logs" WHERE "userId" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
     await prisma.$executeRawUnsafe(`DELETE FROM "enrollments" WHERE "userId" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
     await prisma.$executeRawUnsafe(`DELETE FROM "news_posts" WHERE "authorId" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM "house_threads" WHERE "authorId" IN (SELECT "id" FROM "users" WHERE "email" LIKE '%@test.academicall')`).catch(() => {});
     await prisma.$executeRawUnsafe(`DELETE FROM "users" WHERE "email" LIKE '%@test.academicall'`).catch((e) => console.error("cleanup", e.message));
     await prisma.$disconnect();
   }

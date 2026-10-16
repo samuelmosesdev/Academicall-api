@@ -26,6 +26,8 @@ import { authLimits as L, rateLimit } from "../middleware/rateLimit";
 import * as vaultCtrl from "../controllers/vault.controller";
 import * as newsCtrl from "../controllers/news.controller";
 import { feedSocial, classSocial, updateClassEvent } from "../controllers/programme.controller";
+import * as aspCtrl from "../controllers/aspirant.controller";
+import * as boardCtrl from "../controllers/board.controller";
 
 const router = Router();
 
@@ -54,6 +56,20 @@ router.delete("/vault/files/:id", authenticate, vaultCtrl.requireVault, vaultCtr
 
 // Academicall News (public reading; sign in to read in full, react and comment)
 router.get("/news", newsCtrl.optionalAuth, newsCtrl.listNews);
+router.get("/news/suggest", newsCtrl.suggest);
+router.get("/news/for-you", authenticate, newsCtrl.forYou);
+router.get("/news/subscriptions", authenticate, newsCtrl.listSubscriptions);
+router.post("/news/subscriptions", authenticate, newsCtrl.subscribe);
+router.patch("/news/subscriptions/prefs", authenticate, newsCtrl.subscriptionPrefs);
+router.delete("/news/subscriptions/:id", authenticate, newsCtrl.unsubscribe);
+// Chief News Agent: oversees every story and every News Agent
+router.get("/news/chief/overview", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefOverview);
+router.get("/news/chief/posts", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefPosts);
+router.patch("/news/chief/posts/:id", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefModerate);
+router.delete("/news/chief/posts/:id", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefDelete);
+router.get("/news/chief/agents", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefAgents);
+router.patch("/news/chief/agents/:id", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefSetAgent);
+router.delete("/news/chief/agents/:id/duty", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefRemoveDuty);
 router.get("/news/desk/posts", authenticate, newsCtrl.requireNewsDesk, newsCtrl.deskList);
 router.post("/news/desk/posts", authenticate, newsCtrl.requireNewsDesk, newsCtrl.createPost);
 router.patch("/news/desk/posts/:id", authenticate, newsCtrl.requireNewsDesk, newsCtrl.updatePost);
@@ -63,6 +79,42 @@ router.post("/news/:id/comments", authenticate, newsCtrl.addComment);
 router.delete("/news/comments/:commentId", authenticate, newsCtrl.deleteComment);
 router.post("/news/:id/reactions", authenticate, newsCtrl.react);
 router.get("/news/:slug", newsCtrl.optionalAuth, newsCtrl.getNews);
+
+// Aspirants: institutions of choice
+router.get("/aspirant/me", authenticate, aspCtrl.getMe);
+router.put("/aspirant/me", authenticate, aspCtrl.saveMe);
+router.post("/aspirant/me/admitted", authenticate, aspCtrl.markAdmitted);
+// Aspirant Houses (members read + reply; House Leaders start threads, pin, mention and manage members)
+router.get("/houses", authenticate, aspCtrl.myHouses);
+router.get("/houses/:id", authenticate, aspCtrl.getHouse);
+router.post("/houses/:id/read", authenticate, aspCtrl.markRead);
+router.get("/houses/:id/threads", authenticate, aspCtrl.listThreads);
+router.post("/houses/:id/threads", authenticate, aspCtrl.createThread);
+router.get("/houses/:id/threads/:threadId", authenticate, aspCtrl.getThread);
+router.patch("/houses/:id/threads/:threadId", authenticate, aspCtrl.updateThread);
+router.delete("/houses/:id/threads/:threadId", authenticate, aspCtrl.deleteThread);
+router.post("/houses/:id/threads/:threadId/replies", authenticate, aspCtrl.addReply);
+router.delete("/houses/:id/replies/:replyId", authenticate, aspCtrl.deleteReply);
+router.get("/houses/:id/members", authenticate, aspCtrl.listMembers);
+router.patch("/houses/:id/members/:userId", authenticate, aspCtrl.setMemberStatus);
+// Admin: aspirants + houses
+router.get("/admin/aspirants", authenticate, requireCap("aspirants.view", "aspirants.manage"), aspCtrl.adminListAspirants);
+router.get("/admin/aspirants/:id", authenticate, requireCap("aspirants.view", "aspirants.manage"), aspCtrl.adminGetAspirant);
+router.patch("/admin/aspirants/:id", authenticate, requireCap("aspirants.manage"), aspCtrl.adminUpdateAspirant);
+router.get("/admin/houses", authenticate, requireCap("houses.manage", "users.houseLeader"), aspCtrl.adminListHouses);
+router.post("/admin/houses", authenticate, requireCap("houses.manage"), aspCtrl.adminCreateHouse);
+router.get("/admin/houses/leader-candidates", authenticate, requireCap("users.houseLeader"), aspCtrl.leaderCandidates);
+router.patch("/admin/houses/:id", authenticate, requireCap("houses.manage"), aspCtrl.adminUpdateHouse);
+router.post("/admin/houses/:id/leaders", authenticate, requireCap("users.houseLeader"), aspCtrl.addLeader);
+router.delete("/admin/houses/:id/leaders/:userId", authenticate, requireCap("users.houseLeader"), aspCtrl.removeLeader);
+// Student dashboard board (curated by admins and agents with board.manage)
+router.get("/board", authenticate, boardCtrl.getBoard);
+router.get("/admin/board", authenticate, requireCap("board.manage"), boardCtrl.adminBoard);
+router.post("/admin/board/slides", authenticate, requireCap("board.manage"), boardCtrl.createSlide);
+router.patch("/admin/board/slides/:id", authenticate, requireCap("board.manage"), boardCtrl.updateSlide);
+router.delete("/admin/board/slides/:id", authenticate, requireCap("board.manage"), boardCtrl.deleteSlide);
+router.post("/admin/board/reorder", authenticate, requireCap("board.manage"), boardCtrl.reorder);
+router.put("/admin/board/settings", authenticate, requireCap("board.manage"), boardCtrl.saveSettings);
 
 // Link previews (public; read by the Firebase Hosting function ogPage)
 router.get("/og/meta", ogCtrl.meta);
