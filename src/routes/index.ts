@@ -27,6 +27,7 @@ import * as vaultCtrl from "../controllers/vault.controller";
 import * as newsCtrl from "../controllers/news.controller";
 import { feedSocial, classSocial, updateClassEvent } from "../controllers/programme.controller";
 import * as aspCtrl from "../controllers/aspirant.controller";
+import * as utmeCtrl from "../controllers/utme.controller";
 import * as boardCtrl from "../controllers/board.controller";
 
 const router = Router();
@@ -79,6 +80,12 @@ router.post("/news/:id/comments", authenticate, newsCtrl.addComment);
 router.delete("/news/comments/:commentId", authenticate, newsCtrl.deleteComment);
 router.post("/news/:id/reactions", authenticate, newsCtrl.react);
 router.get("/news/:slug", newsCtrl.optionalAuth, newsCtrl.getNews);
+
+// UTME CBT practice history (the bank itself is static in the web app)
+router.get("/utme/attempts", authenticate, utmeCtrl.listAttempts);
+router.post("/utme/attempts", authenticate, utmeCtrl.saveAttempt);
+router.get("/utme/attempts/:id", authenticate, utmeCtrl.getAttempt);
+router.delete("/utme/attempts/:id", authenticate, utmeCtrl.deleteAttempt);
 
 // Aspirants: institutions of choice
 router.get("/aspirant/me", authenticate, aspCtrl.getMe);

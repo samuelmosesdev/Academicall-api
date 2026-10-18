@@ -150,6 +150,7 @@ model User {
   houseThreads          HouseThread[]          @relation("HouseThreadAuthor")
   houseReplies          HouseReply[]           @relation("HouseReplyAuthor")
   newsSubscriptions     NewsSubscription[]
+  utmeAttempts          UtmeAttempt[]
 
   @@index([role])
   @@index([department])
@@ -1223,4 +1224,34 @@ model NewsSubscription {
   @@unique([userId, kind, value])
   @@index([kind, value])
   @@map("news_subscriptions")
+}
+
+// ── UTME CBT practice ────────────────────────────────────────────────────────
+/// One finished UTME CBT practice session. The question bank itself is static
+/// (public/utme/*.json in the web app); this keeps each candidate's history.
+model UtmeAttempt {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "topic" | "year" | "mixed"
+  mode        String
+  /// "exam" (timed, answers at the end) | "practice" (instant feedback)
+  style       String
+  /// [{ slug, name, total, correct, score }]
+  subjects    Json
+  /// The setup the candidate picked: topics, years, question counts, time limit
+  config      Json
+  /// Compact answers: { "<slug>:<qid>": optionIndex }
+  answers     Json?
+  total       Int
+  correct     Int
+  /// Scaled like JAMB: each subject out of 100, so four subjects make 400
+  score       Int
+  maxScore    Int
+  durationSec Int
+  timeLimitSec Int?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("utme_attempts")
 }
