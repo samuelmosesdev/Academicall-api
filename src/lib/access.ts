@@ -40,8 +40,11 @@ export const CAPABILITIES = [
   { key: "courses.manage", group: "Content", scope: "staff", label: "Manage courses", hint: "Create and edit courses" },
   { key: "academics.manage", group: "Content", scope: "staff", label: "Academic structure", hint: "Edit institutions, faculties, departments and the course catalogue" },
   { key: "cbt.manage", group: "Content", scope: "staff", label: "CBT Builder", hint: "Write and edit practice questions" },
+  { key: "utme.manage", group: "Content", scope: "staff", label: "UTME question bank", hint: "Upload, edit, remove and restore UTME CBT questions and pictures" },
   { key: "announcements.publish", group: "Content", scope: "staff", label: "Announcements", hint: "Publish platform announcements" },
   { key: "feeds.moderate", group: "Content", scope: "staff", label: "Moderate feeds", hint: "Remove posts from department feeds" },
+  { key: "moderation.manage", group: "Content", scope: "staff", label: "Moderation queue", hint: "Handle reports from groups, houses and news comments: hide, warn or mute" },
+  { key: "tests.manage", group: "Content", scope: "staff", label: "General tests", hint: "Set timed tests for chosen students or aspirants and see results" },
   // Operations
   { key: "requests.review", group: "Operations", scope: "staff", label: "Review requests", hint: "Approve profile-change and other requests" },
   { key: "payments.review", group: "Operations", scope: "staff", label: "Payments", hint: "Review and approve payment claims" },
@@ -62,7 +65,7 @@ const ALL_SECRETARY = CAPABILITIES.filter((c) => c.scope === "secretary").map((c
 
 export const ROLE_DEFAULTS: Record<string, string[]> = {
   alphaAgent: ALL_STAFF.filter((k) => !["users.delete", "users.secretary", "academics.manage", "users.houseLeader", "houses.manage", "board.manage"].includes(k)),
-  agent: ["users.view", "documents.review", "documents.manage", "courses.manage", "cbt.manage", "announcements.publish", "feeds.moderate", "requests.review"],
+  agent: ["users.view", "documents.review", "documents.manage", "courses.manage", "cbt.manage", "utme.manage", "announcements.publish", "feeds.moderate", "moderation.manage", "tests.manage", "requests.review"],
 };
 export const TAG_DEFAULTS: Record<string, string[]> = {
   secretary: ["secretariat.records", "secretariat.activity"],

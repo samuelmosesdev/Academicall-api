@@ -7,6 +7,7 @@
  *    publish, edit and remove stories, and can moderate comments.
  */
 import { Request, Response, NextFunction } from "express";
+import { mutedMessage } from "../lib/moderation";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import jwt from "jsonwebtoken";
@@ -212,6 +213,7 @@ function commentRateLimited(userId: string) {
 }
 
 export const addComment = handle(async (req, res) => {
+  { const muted = mutedMessage(req); if (muted) throw new HttpError(403, muted, "muted"); }
   const body = z.object({ body: z.string().trim().min(1, "Write something first").max(1000, "Keep comments under 1,000 characters") }).parse(req.body || {});
   const post = await prisma.newsPost.findFirst({ where: { id: String(req.params.id), status: "published" }, select: { id: true } });
   if (!post) throw new HttpError(404, "This story isn't available");

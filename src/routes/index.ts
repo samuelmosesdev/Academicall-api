@@ -28,11 +28,114 @@ import * as newsCtrl from "../controllers/news.controller";
 import { feedSocial, classSocial, updateClassEvent } from "../controllers/programme.controller";
 import * as aspCtrl from "../controllers/aspirant.controller";
 import * as utmeCtrl from "../controllers/utme.controller";
+import * as utmeAdminCtrl from "../controllers/utmeAdmin.controller";
+import * as featuresCtrl from "../controllers/features.controller";
+import { featureGate, maintenanceGate } from "../lib/features";
+import * as securityCtrl from "../controllers/security.controller";
+import * as meCtrl from "../controllers/me.controller";
+import * as modCtrl from "../controllers/moderation.controller";
+import * as utmeInsightsCtrl from "../controllers/utmeInsights.controller";
+import * as testsCtrl from "../controllers/tests.controller";
+import * as searchCtrl from "../controllers/search.controller";
+import * as dataCtrl from "../controllers/dataAdmin.controller";
 import * as boardCtrl from "../controllers/board.controller";
 
 const router = Router();
-
 const userKey = (r: any) => String(r.user?.id || r.ip);
+
+// Feature switches: a feature an admin discontinued answers 403 feature_off (staff keep access)
+router.get("/features", featuresCtrl.publicFeatures);
+// Maintenance mode: everyone but staff gets 503 while it's on
+router.use(maintenanceGate);
+router.use(featureGate);
+router.get("/admin/features", authenticate, requireCap("settings.manage"), featuresCtrl.adminFeatures);
+router.put("/admin/features/:key", authenticate, requireCap("settings.manage"), featuresCtrl.setFeature);
+router.put("/admin/maintenance", authenticate, requireCap("settings.manage"), featuresCtrl.setMaintenance);
+router.put("/admin/banner", authenticate, requireCap("settings.manage"), featuresCtrl.setBanner);
+router.get("/admin/beta-testers", authenticate, requireCap("settings.manage"), featuresCtrl.listBetaTesters);
+router.put("/admin/beta-testers/:id", authenticate, requireCap("settings.manage"), featuresCtrl.setBetaTester);
+
+// Two-step sign-in, devices and sign-in history (self)
+const twoFactorLimit = rateLimit({ name: "2fa-verify", windowMs: 15 * 60_000, max: 15, key: (r: any) => String(r.body?.challengeId || r.ip), failuresOnly: true, message: "Too many wrong codes. Wait a few minutes." });
+const twoFactorSendLimit = rateLimit({ name: "2fa-send", windowMs: 15 * 60_000, max: 6, key: (r: any) => String(r.user?.id || r.body?.challengeId || r.ip), message: "Too many codes requested. Wait a few minutes." });
+router.post("/auth/2fa/verify", twoFactorLimit, authCtrl.verifyTwoFactor);
+router.post("/auth/2fa/resend", twoFactorSendLimit, authCtrl.resendTwoFactor);
+router.get("/me/2fa", authenticate, securityCtrl.status);
+router.post("/me/2fa/totp/start", authenticate, securityCtrl.totpStart);
+router.post("/me/2fa/totp/confirm", authenticate, twoFactorLimit, securityCtrl.totpConfirm);
+router.post("/me/2fa/email/start", authenticate, twoFactorSendLimit, securityCtrl.emailStart);
+router.post("/me/2fa/email/confirm", authenticate, twoFactorLimit, securityCtrl.emailConfirm);
+router.post("/me/2fa/backup-codes", authenticate, securityCtrl.regenerateBackupCodes);
+router.delete("/me/2fa", authenticate, securityCtrl.disable);
+router.get("/me/sessions", authenticate, securityCtrl.mySessions);
+router.post("/me/sessions/sign-out-others", authenticate, securityCtrl.endOtherSessions);
+router.delete("/me/sessions/:id", authenticate, securityCtrl.endMySession);
+router.get("/me/logins", authenticate, securityCtrl.myLogins);
+// Staff: security overview, per-person devices and 2FA reset
+router.get("/admin/security", authenticate, requireCap("settings.manage"), securityCtrl.adminOverview);
+router.put("/admin/security", authenticate, requireCap("settings.manage"), securityCtrl.adminSaveSettings);
+router.get("/users/:id/security", authenticate, requireCap("users.password"), securityCtrl.userSecurity);
+router.post("/users/:id/2fa/reset", authenticate, requireCap("users.password"), securityCtrl.resetUserTwoFactor);
+router.delete("/users/:id/sessions/:sid", authenticate, requireCap("users.password"), securityCtrl.endUserSession);
+
+// Push devices + notification preferences, privacy, blocks, CGPA, my data
+router.post("/me/devices", authenticate, meCtrl.registerDevice);
+router.delete("/me/devices", authenticate, meCtrl.removeDevice);
+router.get("/me/notification-prefs", authenticate, meCtrl.getPrefs);
+router.put("/me/notification-prefs", authenticate, meCtrl.savePrefs);
+router.get("/me/privacy", authenticate, meCtrl.getPrivacy);
+router.put("/me/privacy", authenticate, meCtrl.savePrivacy);
+router.get("/me/blocks", authenticate, meCtrl.listBlocks);
+router.post("/me/blocks/:userId", authenticate, meCtrl.block);
+router.delete("/me/blocks/:userId", authenticate, meCtrl.unblock);
+router.get("/me/results", authenticate, meCtrl.listResults);
+router.put("/me/results/semester", authenticate, meCtrl.saveSemester);
+router.delete("/me/results/semester", authenticate, meCtrl.deleteSemester);
+router.put("/me/results/settings", authenticate, meCtrl.saveResultSettings);
+router.get("/me/data-export", authenticate, meCtrl.downloadMyData);
+router.get("/me/data-requests", authenticate, meCtrl.myDataRequests);
+router.post("/me/data-requests", authenticate, meCtrl.createDataRequest);
+
+// Reports + moderation queue
+const reportLimit = rateLimit({ name: "reports", windowMs: 60_000, max: 10, key: userKey });
+router.post("/reports", authenticate, reportLimit, modCtrl.createReport);
+router.get("/admin/moderation/summary", authenticate, requireCap("moderation.manage"), modCtrl.summary);
+router.get("/admin/moderation/reports", authenticate, requireCap("moderation.manage"), modCtrl.listReports);
+router.post("/admin/moderation/reports/:id/action", authenticate, requireCap("moderation.manage"), modCtrl.actOnReport);
+router.get("/admin/moderation/restrictions", authenticate, requireCap("moderation.manage"), modCtrl.listRestrictions);
+router.post("/admin/moderation/restrictions/:id/lift", authenticate, requireCap("moderation.manage"), modCtrl.liftRestriction);
+
+// Search
+router.get("/search", authenticate, searchCtrl.search);
+
+// General tests
+router.get("/admin/tests", authenticate, requireCap("tests.manage"), testsCtrl.adminList);
+router.post("/admin/tests", authenticate, requireCap("tests.manage"), testsCtrl.create);
+router.get("/admin/tests/options", authenticate, requireCap("tests.manage"), testsCtrl.options);
+router.get("/admin/tests/people", authenticate, requireCap("tests.manage"), testsCtrl.people);
+router.post("/admin/tests/audience-preview", authenticate, requireCap("tests.manage"), testsCtrl.audiencePreview);
+router.get("/admin/tests/:id", authenticate, requireCap("tests.manage"), testsCtrl.adminGet);
+router.put("/admin/tests/:id", authenticate, requireCap("tests.manage"), testsCtrl.update);
+router.post("/admin/tests/:id/publish", authenticate, requireCap("tests.manage"), testsCtrl.publish);
+router.post("/admin/tests/:id/close", authenticate, requireCap("tests.manage"), testsCtrl.close);
+router.post("/admin/tests/:id/reopen", authenticate, requireCap("tests.manage"), testsCtrl.reopen);
+router.post("/admin/tests/:id/duplicate", authenticate, requireCap("tests.manage"), testsCtrl.duplicate);
+router.delete("/admin/tests/:id", authenticate, requireCap("tests.manage"), testsCtrl.remove);
+router.get("/admin/tests/:id/results", authenticate, requireCap("tests.manage"), testsCtrl.results);
+router.get("/tests", authenticate, testsCtrl.myTests);
+router.post("/tests/:id/start", authenticate, testsCtrl.start);
+router.put("/tests/:id/answers", authenticate, testsCtrl.saveAnswers);
+router.post("/tests/:id/submit", authenticate, testsCtrl.submit);
+router.get("/tests/:id/result", authenticate, testsCtrl.myResult);
+
+// Data requests + backups (admins)
+router.post("/admin/backups/report", dataCtrl.reportBackup);
+router.get("/admin/data-requests", authenticate, requireCap("settings.manage"), dataCtrl.listRequests);
+router.patch("/admin/data-requests/:id", authenticate, requireCap("settings.manage"), dataCtrl.updateRequest);
+router.get("/admin/users/:id/export", authenticate, requireCap("settings.manage"), dataCtrl.exportUser);
+router.get("/admin/backups", authenticate, requireCap("settings.manage"), dataCtrl.listBackups);
+router.post("/admin/backups/run", authenticate, requireCap("settings.manage"), dataCtrl.runBackup);
+
 const vaultUnlockLimit = rateLimit({ name: "vault-unlock", windowMs: 15 * 60_000, max: 12, key: userKey, failuresOnly: true, message: "Too many PIN attempts. Wait a few minutes." });
 const vaultOtpLimit = rateLimit({ name: "vault-otp", windowMs: 60 * 60_000, max: 5, key: userKey, message: "Too many reset codes requested. Try again in an hour." });
 const vaultResetLimit = rateLimit({ name: "vault-reset", windowMs: 15 * 60_000, max: 8, key: userKey, failuresOnly: true });
@@ -82,6 +185,26 @@ router.post("/news/:id/reactions", authenticate, newsCtrl.react);
 router.get("/news/:slug", newsCtrl.optionalAuth, newsCtrl.getNews);
 
 // UTME CBT practice history (the bank itself is static in the web app)
+// UTME control room: every editor endpoint is guarded by its own capability.
+const utmeMediaUpload = express.raw({ type: () => true, limit: "7mb" });
+router.get("/utme/patches", utmeAdminCtrl.publicPatches);
+router.get("/utme/media/:id", utmeAdminCtrl.media);
+router.get("/admin/utme/summary", authenticate, requireCap("utme.manage"), utmeAdminCtrl.summary);
+router.get("/admin/utme/patches", authenticate, requireCap("utme.manage"), utmeAdminCtrl.listPatches);
+router.get("/admin/utme/team", authenticate, requireCap("utme.manage"), utmeAdminCtrl.team);
+router.post("/admin/utme/media", authenticate, requireCap("utme.manage"), utmeMediaUpload, utmeAdminCtrl.uploadMedia);
+router.post("/admin/utme/questions/:slug/bulk", authenticate, requireCap("utme.manage"), utmeAdminCtrl.bulkAdd);
+router.post("/admin/utme/questions/:slug", authenticate, requireCap("utme.manage"), utmeAdminCtrl.addQuestion);
+router.put("/admin/utme/questions/:slug/:qid", authenticate, requireCap("utme.manage"), utmeAdminCtrl.saveQuestion);
+router.delete("/admin/utme/questions/:slug/:qid", authenticate, requireCap("utme.manage"), utmeAdminCtrl.removeQuestion);
+router.post("/admin/utme/questions/:slug/:qid/restore", authenticate, requireCap("utme.manage"), utmeAdminCtrl.restoreQuestion);
+router.post("/admin/utme/questions/:slug/:qid/revert", authenticate, requireCap("utme.manage"), utmeAdminCtrl.revertQuestion);
+router.get("/utme/insights", authenticate, utmeInsightsCtrl.insights);
+router.put("/utme/goals", authenticate, meCtrl.saveUtmeGoals);
+router.post("/utme/reports", authenticate, utmeInsightsCtrl.reportQuestion);
+router.get("/admin/utme/reports", authenticate, requireCap("utme.manage"), utmeInsightsCtrl.listReports);
+router.post("/admin/utme/reports/resolve", authenticate, requireCap("utme.manage"), utmeInsightsCtrl.resolveReports);
+router.get("/admin/utme/stats", authenticate, requireCap("utme.manage"), utmeInsightsCtrl.stats);
 router.get("/utme/attempts", authenticate, utmeCtrl.listAttempts);
 router.post("/utme/attempts", authenticate, utmeCtrl.saveAttempt);
 router.get("/utme/attempts/:id", authenticate, utmeCtrl.getAttempt);

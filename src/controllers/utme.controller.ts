@@ -25,6 +25,10 @@ const attemptBody = z.object({
   answers: z.record(z.number().int().min(-1).max(4)).optional(),
   durationSec: z.number().int().min(0).max(6 * 3600),
   timeLimitSec: z.number().int().min(0).max(6 * 3600).nullable().optional(),
+  /** { slug: { topic: [answered, correct] } } */
+  topicStats: z.record(z.record(z.tuple([z.number().int().min(0).max(400), z.number().int().min(0).max(400)]))).optional(),
+  /** "slug:qid" of questions answered wrongly */
+  missed: z.array(z.string().max(80)).max(400).optional(),
 });
 
 /** POST /utme/attempts — save a finished session. */
@@ -49,6 +53,8 @@ export const saveAttempt = handle(async (req, res) => {
       maxScore: body.subjects.length * 100,
       durationSec: body.durationSec,
       timeLimitSec: body.timeLimitSec ?? null,
+      topicStats: body.topicStats ?? undefined,
+      missed: body.missed ?? [],
     },
   });
   res.status(201).json(publicAttempt(row));

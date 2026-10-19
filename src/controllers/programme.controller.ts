@@ -1,3 +1,4 @@
+import { mutedMessage } from "../lib/moderation";
 /**
  * Programme hub (StudentDepartment page): feed posts, class events, comments and
  * reactions — scoped by institution + programme, and pushed live over SSE.
@@ -97,6 +98,8 @@ function toggle(list: any[], user: ScopedUser, type: string) {
 function handlers(target: Target) {
   return {
     addComment: (req: Request, res: Response) => {
+      const muted = mutedMessage(req);
+      if (muted) return res.status(403).json({ error: muted, code: "muted" });
       const parsed = commentSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "Write a comment first (up to 2,000 characters)." });
       return mutateSocial(req, res, target, (row, user) => {

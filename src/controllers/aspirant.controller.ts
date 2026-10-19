@@ -8,6 +8,7 @@
  *  - Admins (and agents with aspirants.* / houses.manage) see every aspirant and every house.
  */
 import { Request, Response } from "express";
+import { assertNotMuted } from "../lib/moderation";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
@@ -267,6 +268,7 @@ const threadSchema = z.object({
 
 /** POST /houses/:id/threads — House Leaders only. Every member is notified. */
 export const createThread = handle(async (req, res) => {
+  assertNotMuted(req);
   const a = await access(req, String(req.params.id));
   if (!a.canPost) throw new HttpError(403, "Only House Leaders start threads. You can reply to any thread.");
   const body = threadSchema.parse(req.body || {});
@@ -340,6 +342,7 @@ const recentReplies = new Map<string, number[]>();
 
 /** POST /houses/:id/threads/:threadId/replies */
 export const addReply = handle(async (req, res) => {
+  assertNotMuted(req);
   const a = await access(req, String(req.params.id));
   if (!a.canReply) throw new HttpError(403, a.member?.status === "muted" ? "A House Leader has muted you here. You can still read." : "You can't reply in this house");
   const thread = await prisma.houseThread.findFirst({ where: { id: String(req.params.threadId), houseId: a.house.id, deletedAt: null } });

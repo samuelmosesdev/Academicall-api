@@ -3,13 +3,24 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { Role } from "@prisma/client";
 import { effectiveCaps, requireCap } from "../lib/access";
+import { needsTwoFactorSetup, sessionIsLive } from "../lib/security";
 
 interface JwtPayload {
   sub: string;
   email: string;
   role: Role;
+  sid?: string;
   iat?: number;
 }
+
+/** Staff an admin requires to use two-step sign-in can only reach setup until it's on. */
+const TWO_FACTOR_GATE_ALLOW = [
+  /^GET \/auth\/me$/,
+  /^GET \/users\/me$/,
+  /^(GET|POST|DELETE) \/me\/2fa(\/.*)?$/,
+  /^GET \/features$/,
+  /^GET \/settings\//,
+];
 
 /** While a password change is forced, only these calls work. */
 const PASSWORD_GATE_ALLOW = [
@@ -50,6 +61,10 @@ export async function authenticate(
       return res.status(401).json({ error: "You were signed out. Sign in again.", code: "session_revoked" });
     }
 
+    if (decoded.sid && !(await sessionIsLive(decoded.sid))) {
+      return res.status(401).json({ error: "This device was signed out. Sign in again.", code: "session_revoked" });
+    }
+
     req.user = {
       id: user.id,
       email: user.email,
@@ -57,12 +72,20 @@ export async function authenticate(
       name: user.name,
       staffTags: user.staffTags || [],
       caps: effectiveCaps(user),
+      sid: decoded.sid,
+      mutedUntil: user.mutedUntil,
     };
 
     if (user.mustChangePassword) {
       const route = `${req.method} ${(req.baseUrl + req.path).replace(/^\/api\/v1/, "").replace(/\/$/, "")}`;
       if (!PASSWORD_GATE_ALLOW.some((rx) => rx.test(route))) {
         return res.status(403).json({ error: "Set a new password before you continue.", code: "password_change_required" });
+      }
+    }
+    if (await needsTwoFactorSetup(user)) {
+      const route = `${req.method} ${(req.baseUrl + req.path).replace(/^\/api\/v1/, "").replace(/\/$/, "")}`;
+      if (!TWO_FACTOR_GATE_ALLOW.some((rx) => rx.test(route))) {
+        return res.status(403).json({ error: "Turn on two-step sign-in before you continue.", code: "two_factor_setup_required" });
       }
     }
     return next();

@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { Role, Prisma } from "@prisma/client";
 import { OAuth2Client, TokenPayload } from "google-auth-library";
 import crypto from "node:crypto";
+import { issueSession, logLogin, twoFactorOn, startLoginChallenge, checkSecondFactor, needsTwoFactorSetup } from "../lib/security";
 
 const VERIFICATION_TTL_MS = 15 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 45 * 1000;
@@ -16,13 +17,6 @@ const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_GOOGLE_CLIENT_ID =
   "307015602920-v39vhisv32vb15sjastrftuc3s4siq95.apps.googleusercontent.com";
 
-function signToken(user: { id: string; email: string; role: Role }) {
-  return jwt.sign(
-    { sub: user.id, email: user.email, role: user.role },
-    process.env.JWT_SECRET || "dev-secret",
-    { expiresIn: process.env.JWT_EXPIRES_IN || "7d" } as jwt.SignOptions
-  );
-}
 
 function publicUser(user: {
   id: string;
@@ -49,7 +43,9 @@ function publicUser(user: {
   mustChangePassword?: boolean;
   staffTags?: string[];
   permissions?: Prisma.JsonValue | null;
-}) {
+  twoFactorMethod?: string | null;
+  betaTester?: boolean;
+}, extra: Record<string, unknown> = {}) {
   return {
     id: user.id,
     email: user.email,
@@ -81,7 +77,66 @@ function publicUser(user: {
     defaultCapabilities: defaultCaps(user),
     grantableCapabilities: grantable(user),
     customPermissions: Array.isArray(user.permissions),
+    twoFactorMethod: user.twoFactorMethod || null,
+    betaTester: !!user.betaTester,
+    ...extra,
   };
+}
+
+type SignInUser = Parameters<typeof publicUser>[0] & { twoFactorSecret?: string | null; twoFactorBackupHashes?: string[] };
+
+/** Password or Google check passed: ask for the second step if it's on, else open a session. */
+async function finishSignIn(req: Request, res: Response, user: SignInUser, method: "password" | "google") {
+  if (twoFactorOn(user)) {
+    const challenge = await startLoginChallenge(user as any, method);
+    await logLogin(req, { userId: user.id, email: user.email, method, outcome: "code_sent" });
+    return res.json(challenge);
+  }
+  const { token } = await issueSession(user, req, method);
+  await logLogin(req, { userId: user.id, email: user.email, method, outcome: "success" });
+  return res.json({ token, user: publicUser(user, { twoFactorSetupRequired: await needsTwoFactorSetup(user) }) });
+}
+
+const verifySchema = z.object({ challengeId: z.string().uuid(), code: z.string().trim().min(6).max(12) });
+
+/** POST /auth/2fa/verify — second step of sign-in. */
+export async function verifyTwoFactor(req: Request, res: Response) {
+  try {
+    const body = verifySchema.parse(req.body);
+    const ch = await prisma.authChallenge.findUnique({ where: { id: body.challengeId } });
+    if (!ch || ch.kind !== "login" || ch.usedAt || ch.expiresAt < new Date()) {
+      return res.status(400).json({ error: "This code has expired. Sign in again.", code: "challenge_expired" });
+    }
+    if (ch.attempts >= 5) return res.status(429).json({ error: "Too many wrong codes. Sign in again.", code: "challenge_locked" });
+    const user = await prisma.user.findUnique({ where: { id: ch.userId } });
+    if (!user || user.status !== "active") return res.status(401).json({ error: "User not found or inactive" });
+    const method = ((ch.meta as any)?.method as "password" | "google") || "password";
+    const result = await checkSecondFactor(user, body.code, ch);
+    if (!result.ok) {
+      await prisma.authChallenge.update({ where: { id: ch.id }, data: { attempts: { increment: 1 } } });
+      await logLogin(req, { userId: user.id, email: user.email, method, outcome: "code_failed" });
+      return res.status(401).json({ error: "That code isn't right.", code: "bad_code", attemptsLeft: Math.max(0, 4 - ch.attempts) });
+    }
+    await prisma.authChallenge.update({ where: { id: ch.id }, data: { usedAt: new Date() } });
+    const { token } = await issueSession(user, req, method);
+    await logLogin(req, { userId: user.id, email: user.email, method, outcome: "code_passed" });
+    return res.json({ token, user: publicUser(user, { usedBackupCode: !!result.usedBackup, backupCodesLeft: user.twoFactorBackupHashes.length - (result.usedBackup ? 1 : 0) }) });
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: "Enter the 6-digit code" });
+    console.error(err);
+    return res.status(500).json({ error: "Could not check the code" });
+  }
+}
+
+/** POST /auth/2fa/resend — email a fresh code for an open sign-in challenge. */
+export async function resendTwoFactor(req: Request, res: Response) {
+  const id = String(req.body?.challengeId || "");
+  const ch = id ? await prisma.authChallenge.findUnique({ where: { id } }) : null;
+  if (!ch || ch.kind !== "login" || ch.usedAt || ch.expiresAt < new Date()) return res.status(400).json({ error: "Sign in again.", code: "challenge_expired" });
+  const user = await prisma.user.findUnique({ where: { id: ch.userId } });
+  if (!user || user.twoFactorMethod !== "email") return res.status(400).json({ error: "This sign-in doesn't use email codes." });
+  await prisma.authChallenge.update({ where: { id: ch.id }, data: { usedAt: new Date() } });
+  return res.json(await startLoginChallenge(user, ((ch.meta as any)?.method as string) || "password"));
 }
 
 const registerSchema = z.object({
@@ -124,7 +179,7 @@ export async function register(req: Request, res: Response) {
       },
     });
 
-    const token = signToken(user);
+    const { token } = await issueSession(user, req, "register");
 
     return res.status(201).json({
       token,
@@ -148,21 +203,22 @@ export async function login(req: Request, res: Response) {
       ? await prisma.user.findUnique({ where: { email: body.identifier.toLowerCase() } })
       : await prisma.user.findUnique({ where: { uniqueId: identifier } });
     if (!user || !user.passwordHash) {
+      await logLogin(req, { userId: user?.id, email: body.identifier.toLowerCase(), method: "password", outcome: "bad_password" });
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
     if (user.status !== "active") {
+      await logLogin(req, { userId: user.id, email: user.email, method: "password", outcome: "inactive" });
       return res.status(401).json({ error: "User not found or inactive" });
     }
 
     const valid = await bcrypt.compare(body.password, user.passwordHash);
     if (!valid) {
+      await logLogin(req, { userId: user.id, email: user.email, method: "password", outcome: "bad_password" });
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    const token = signToken(user);
-
-    return res.json({ token, user: publicUser(user) });
+    return finishSignIn(req, res, user, "password");
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: err.errors });
@@ -251,9 +307,10 @@ export async function googleLogin(req: Request, res: Response) {
     }
 
     if (user.status !== "active") {
+      await logLogin(req, { userId: user.id, email: user.email, method: "google", outcome: "inactive" });
       return res.status(401).json({ error: "User not found or inactive" });
     }
-    return res.json({ token: signToken(user), user: publicUser(user) });
+    return finishSignIn(req, res, user, "google");
   } catch (err) {
     console.error("Google login — saving user failed:", err);
     const reason =
@@ -480,6 +537,14 @@ export async function me(req: Request, res: Response) {
         aspirantMeta: true,
         newsStatus: true,
         newsAlerts: true,
+        twoFactorMethod: true,
+        twoFactorEnabledAt: true,
+        betaTester: true,
+        privacy: true,
+        notificationPrefs: true,
+        mutedUntil: true,
+        utmeExamDate: true,
+        utmeDailyTarget: true,
         aspirations: {
           orderBy: { rank: "asc" },
           select: { rank: true, course: true, programId: true, institutionId: true, institution: { select: { id: true, name: true, displayName: true, abbreviation: true, state: true } } },
@@ -498,6 +563,7 @@ export async function me(req: Request, res: Response) {
         defaultCapabilities: defaultCaps(user),
         grantableCapabilities: grantable(user),
         customPermissions: Array.isArray(user.permissions),
+        twoFactorSetupRequired: await needsTwoFactorSetup(user),
         profileComplete: Boolean(
           user.profileComplete &&
           (user.role !== "user" && user.role !== "courseRep" || user.program?.trim())

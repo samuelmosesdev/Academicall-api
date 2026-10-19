@@ -12,6 +12,7 @@
  * institution/programme scope and they can invite that scope.
  */
 import { Request, Response } from "express";
+import { mutedMessage } from "../lib/moderation";
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
@@ -744,6 +745,7 @@ function rateLimited(userId: string) {
 export async function sendMessage(req: Request, res: Response) {
   try {
     const user = await me(req);
+    { const muted = mutedMessage(req); if (muted) throw new HttpError(403, muted, "muted"); }
     const { group, member } = await requireRole(String(req.params.id), user.id);
     const body = messageSchema.parse(req.body);
     const text = (body.text || "").trim();

@@ -1,3 +1,4 @@
+import { revokeSessions as revokeDeviceSessions } from "../lib/security";
 import { resolveAcademicSelection } from "./institutions.controller";
 import { Request, Response } from "express";
 import { z } from "zod";
@@ -178,6 +179,9 @@ export async function getUser(req: Request, res: Response) {
       matricNumber: true,
       phone: true,
       bio: true,
+      betaTester: true,
+      twoFactorMethod: true,
+      mutedUntil: true,
       photoUrl: true,
       avatarUrl: true,
       status: true,
@@ -613,6 +617,7 @@ export async function revokeSessions(req: Request, res: Response) {
   if (!target) return res.status(404).json({ error: "User not found" });
   if (!outranks(req.user!, target)) return res.status(403).json({ error: "You can't sign out an account at or above your rank" });
   await prisma.user.update({ where: { id: target.id }, data: { sessionsRevokedAt: new Date() } });
+  await revokeDeviceSessions(target.id);
   await audit(req.user, "user.sign_out_everywhere", { id: target.id, label: target.name || target.email });
   res.json({ ok: true });
 }

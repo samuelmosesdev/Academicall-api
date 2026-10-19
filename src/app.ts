@@ -8,9 +8,14 @@ const app = express();
 const configuredOrigins = process.env.CORS_ORIGIN?.split(",")
   .map((item) => item.trim())
   .filter(Boolean);
-const allowedOrigins = configuredOrigins?.length
-  ? configuredOrigins
-  : ["https://academicall.site", "https://localhost"];
+const allowedOrigins = [
+  ...new Set([
+    "https://academicall.site",
+    "https://academicall.pages.dev",
+    "https://localhost",
+    ...(configuredOrigins || []),
+  ]),
+];
 const isLocalOrigin = (origin: string) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 const isLocalDevelopmentOrigin = (origin: string) =>
@@ -47,6 +52,9 @@ app.use(
   })
 );
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+// UTME bulk question uploads can be bigger than ordinary requests
+const bulkJson = express.json({ limit: "8mb" });
+app.use((req, res, next) => (/^\/api\/v1\/admin\/(utme\/questions\/[a-z0-9-]+\/bulk|tests(\/[0-9a-f-]+)?)$/.test(req.path) ? bulkJson(req, res, next) : next()));
 app.use(
   express.json({
     limit: "2mb",

@@ -10,6 +10,8 @@ declare global {
         name?: string | null;
         staffTags?: string[];
         caps?: string[];
+        sid?: string;
+        mutedUntil?: Date | null;
       };
     }
   }

@@ -41,6 +41,9 @@ enum NotificationType {
   announcement_published
   house
   news
+  test
+  moderation
+  security
 }
 
 model User {
@@ -118,6 +121,23 @@ model User {
   newsStatusAt               DateTime?
   /// Get alerts for stories publishers aim at people like you
   newsAlerts                 Boolean      @default(true)
+  /// Can't post, comment or reply until this moment (set from the moderation queue)
+  mutedUntil                 DateTime?
+  /// { profileVisibility: everyone|classmates|nobody, showCourses: bool }
+  privacy                    Json?
+  /// Two-step sign-in: "email" | "totp" | null (off)
+  twoFactorMethod            String?
+  /// TOTP secret, AES-GCM encrypted
+  twoFactorSecret            String?
+  twoFactorEnabledAt         DateTime?
+  twoFactorBackupHashes      String[]     @default([])
+  /// Sees features an admin has limited to beta testers
+  betaTester                 Boolean      @default(false)
+  /// { types: { [type]: false }, quietStart: "22:00", quietEnd: "06:00", push: bool }
+  notificationPrefs          Json?
+  /// UTME goals: exam date (YYYY-MM-DD) and questions per day
+  utmeExamDate               String?
+  utmeDailyTarget            Int?
   createdAt                  DateTime     @default(now())
   updatedAt                  DateTime     @updatedAt
 
@@ -151,6 +171,14 @@ model User {
   houseReplies          HouseReply[]           @relation("HouseReplyAuthor")
   newsSubscriptions     NewsSubscription[]
   utmeAttempts          UtmeAttempt[]
+  utmePatches           UtmeQuestionPatch[] @relation("UtmePatchEditor")
+  sessions              UserSession[]
+  deviceTokens          DeviceToken[]
+  academicResults       AcademicResult[]
+  testAttempts          GeneralTestAttempt[]
+  blocksMade            UserBlock[]            @relation("Blocker")
+  blocksReceived        UserBlock[]            @relation("Blocked")
+  restrictions          UserRestriction[]
 
   @@index([role])
   @@index([department])
@@ -274,6 +302,10 @@ model Notification {
   deletedAt   DateTime?
   createdAt   DateTime         @default(now())
 
+  /// Set once the push dispatcher has handled it (sent, skipped or no device)
+  pushedAt     DateTime?
+
+  @@index([pushedAt, createdAt])
   @@index([userId, readByUser])
   @@index([userId, archived])
   @@index([readByAdmin])
@@ -1250,8 +1282,331 @@ model UtmeAttempt {
   maxScore    Int
   durationSec Int
   timeLimitSec Int?
+  /// { "<slug>": { "<topic>": [answered, correct] } } — feeds progress coaching
+  topicStats  Json?
+  /// ["<slug>:<qid>", …] questions answered wrongly — feeds the control room's most-missed list
+  missed      String[] @default([])
   createdAt   DateTime @default(now())
 
   @@index([userId, createdAt])
   @@map("utme_attempts")
+}
+
+/// UTME bank changes made in the control room. The shipped bank (public/utme)
+/// stays untouched; the app layers these on top when it loads a subject.
+model UtmeQuestionPatch {
+  id          String   @id @default(uuid())
+  /// subject slug, e.g. "biology"
+  slug        String
+  /// question id in the shipped bank ("3-148"), or "x-…" for questions added here
+  qid         String
+  /// "edited" | "added" | "removed"
+  status      String
+  /// true when the question was added in the control room (not in the shipped bank)
+  isNew       Boolean  @default(false)
+  /// question in bank format (s, si, o, oi, a, e, y, t/tn, p/pt/ph); null for a plain removal
+  data        Json?
+  note        String?
+  updatedById String?
+  updatedBy   User?    @relation("UtmePatchEditor", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([slug, qid])
+  @@index([updatedAt])
+  @@map("utme_question_patches")
+}
+
+/// Pictures uploaded for UTME questions (watermarked WebP).
+model UtmeMedia {
+  id          String   @id @default(uuid())
+  slug        String?
+  mime        String   @default("image/webp")
+  width       Int
+  height      Int
+  bytes       Bytes
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@map("utme_media")
+}
+
+// ── Safety & moderation ──────────────────────────────────────────────────────
+/// Something a user reported: a group message, house thread or reply, news comment, feed post or a person.
+model ContentReport {
+  id           String    @id @default(uuid())
+  reporterId   String?
+  /// group_message | house_thread | house_reply | news_comment | feed_post | user
+  targetType   String
+  targetId     String
+  /// The author of the reported content (or the reported person)
+  targetUserId String?
+  /// spam | abuse | harassment | sexual | violence | false_info | cheating | other
+  reason       String
+  note         String?
+  /// Copy of the content at report time, so staff see it even if it's edited or removed
+  snapshot     Json?
+  /// Where in the app it lives, e.g. /study/BIO101
+  contextUrl   String?
+  /// open | actioned | dismissed
+  status       String    @default("open")
+  /// hide | warn | mute | dismiss
+  action       String?
+  actionNote   String?
+  handledById  String?
+  handledByName String?
+  handledAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@index([targetUserId])
+  @@map("content_reports")
+}
+
+model UserBlock {
+  blockerId String
+  blocker   User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String
+  blocked   User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("user_blocks")
+}
+
+/// Warnings and mutes issued from the moderation queue.
+model UserRestriction {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// warn | mute
+  kind          String
+  reason        String?
+  reportId      String?
+  until         DateTime?
+  createdById   String?
+  createdByName String?
+  liftedAt      DateTime?
+  liftedById    String?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@map("user_restrictions")
+}
+
+// ── Sign-in security ─────────────────────────────────────────────────────────
+/// One signed-in device. Tokens carry its id, so signing a device out revokes its token.
+model UserSession {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ip          String?
+  userAgent   String?
+  /// web | android | ios
+  platform    String?
+  /// password | google
+  method      String?
+  createdAt   DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  revokedAt   DateTime?
+
+  @@index([userId, revokedAt])
+  @@map("user_sessions")
+}
+
+model LoginEvent {
+  id        String   @id @default(uuid())
+  userId    String?
+  email     String?
+  ip        String?
+  userAgent String?
+  /// password | google
+  method    String?
+  /// success | bad_password | inactive | code_sent | code_failed | code_passed
+  outcome   String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("login_events")
+}
+
+/// Short-lived two-step sign-in challenge (email code or authenticator check).
+model AuthChallenge {
+  id        String    @id @default(uuid())
+  userId    String
+  /// login | setup_email | disable
+  kind      String
+  codeHash  String?
+  attempts  Int       @default(0)
+  meta      Json?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, kind])
+  @@map("auth_challenges")
+}
+
+// ── Push notifications ───────────────────────────────────────────────────────
+model DeviceToken {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String   @unique
+  /// android | ios | web
+  platform   String
+  appVersion String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// ── UTME question reports ────────────────────────────────────────────────────
+model UtmeQuestionReport {
+  id           String    @id @default(uuid())
+  slug         String
+  qid          String
+  /// wrong_answer | typo | missing_image | unclear | wrong_topic | other
+  reason       String
+  note         String?
+  userId       String?
+  userName     String?
+  /// open | fixed | dismissed
+  status       String    @default("open")
+  resolution   String?
+  resolvedById String?
+  resolvedByName String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([status, slug])
+  @@index([slug, qid])
+  @@map("utme_question_reports")
+}
+
+// ── CGPA ─────────────────────────────────────────────────────────────────────
+model AcademicResult {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// e.g. "2025/2026"
+  session     String
+  /// first | second | third
+  semester    String
+  courseCode  String
+  courseTitle String?
+  units       Int
+  /// A | B | C | D | E | F
+  grade       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, session, semester])
+  @@map("academic_results")
+}
+
+// ── Data requests & backups ──────────────────────────────────────────────────
+model DataRequest {
+  id            String    @id @default(uuid())
+  userId        String?
+  userEmail     String?
+  userName      String?
+  /// export | delete
+  kind          String
+  /// pending | done | rejected | cancelled
+  status        String    @default("pending")
+  /// self | staff
+  source        String    @default("self")
+  note          String?
+  handledById   String?
+  handledByName String?
+  handledAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@map("data_requests")
+}
+
+model BackupRun {
+  id          String    @id @default(uuid())
+  /// running | ok | failed
+  status      String
+  /// manual | scheduled | external
+  kind        String    @default("scheduled")
+  sizeBytes   BigInt?
+  location    String?
+  note        String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  createdById String?
+
+  @@index([startedAt])
+  @@map("backup_runs")
+}
+
+// ── General tests (set by staff, aimed at chosen students or aspirants) ──────
+model GeneralTest {
+  id            String    @id @default(uuid())
+  title         String
+  instructions  String?
+  /// [{ key, name, subject?, count }]
+  sections      Json
+  /// Frozen question set with answers: [{ key, section, s, o, a, e, … }]. Never sent to candidates with answers.
+  questions     Json
+  questionCount Int       @default(0)
+  durationMin   Int       @default(30)
+  opensAt       DateTime?
+  closesAt      DateTime?
+  /// { roles: ["student","aspirant"], institutionIds, facultyIds, departmentIds, programIds, levels, houseIds, choiceInstitutionIds, utmeYears, plans, userIds }
+  audience      Json
+  audienceCount Int       @default(0)
+  /// instant | after_close | hidden
+  showResults   String    @default("instant")
+  shuffle       Boolean   @default(true)
+  maxAttempts   Int       @default(1)
+  /// draft | published | closed | archived
+  status        String    @default("draft")
+  createdById   String?
+  createdByName String?
+  publishedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  attempts      GeneralTestAttempt[]
+
+  @@index([status, opensAt])
+  @@map("general_tests")
+}
+
+model GeneralTestAttempt {
+  id            String      @id @default(uuid())
+  testId        String
+  test          GeneralTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attemptNo     Int         @default(1)
+  /// in_progress | submitted
+  status        String      @default("in_progress")
+  /// question keys in the order this candidate sees them
+  order         Json
+  /// { "<key>": optionIndex }
+  answers       Json?
+  startedAt     DateTime    @default(now())
+  deadlineAt    DateTime
+  submittedAt   DateTime?
+  total         Int         @default(0)
+  correct       Int?
+  /// percentage 0–100
+  score         Int?
+  /// [{ key, name, total, correct }]
+  sectionScores Json?
+
+  @@unique([testId, userId, attemptNo])
+  @@index([testId, status])
+  @@index([userId])
+  @@map("general_test_attempts")
 }

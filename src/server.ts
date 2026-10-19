@@ -2,6 +2,7 @@ import "dotenv/config";
 import app from "./app";
 import { seedInstitutions } from "./lib/institutionSeed";
 import { seedCurricula } from "./lib/curriculumSeed";
+import { startPushDispatcher } from "./lib/push";
 
 const port = Number(process.env.PORT) || 4000;
 
@@ -11,6 +12,9 @@ const server = app.listen(port, "0.0.0.0", () => {
 });
 
 server.keepAliveTimeout = 65_000;
+
+// Push notifications for new in-app notifications (off until FIREBASE_SERVICE_ACCOUNT is set)
+startPushDispatcher();
 
 // Load the bundled institution catalogue in the background (idempotent; skips existing rows).
 if (process.env.AUTO_SEED_INSTITUTIONS !== "false") {
