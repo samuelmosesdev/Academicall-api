@@ -1,3 +1,4 @@
+import { activatePlan } from "../lib/billing";
 import { Request, Response } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
@@ -67,12 +68,14 @@ async function activatePro({
   planId,
   reference,
   amount,
+  days,
 }: {
   userId: string;
   email: string;
   planId: string;
   reference: string | null;
   amount: number | null;
+  days?: number | null;
 }) {
   let uid = userId;
 
@@ -94,26 +97,15 @@ async function activatePro({
     return { ok: false, reason: "missing_user" };
   }
 
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: uid },
-      data: { plan: "pro" },
-    }),
-    prisma.payment.create({
-      data: {
-        userId: uid,
-        plan: planId || "annual",
-        reference: reference || null,
-        amount: amount != null ? Math.round(amount) : null,
-        status: "success",
-        meta: { source: "paystack_webhook", email: email || null },
-      },
-    }),
-    prisma.paymentClaim.updateMany({
-      where: { userId: uid, status: { not: "activated" } },
-      data: { status: "activated", reference: reference || undefined },
-    }),
-  ]);
+  await activatePlan({
+    userId: uid,
+    planId: planId || "annual",
+    reference,
+    amountNaira: amount != null ? Math.round(amount) : null,
+    days,
+    source: "paystack_webhook",
+    email,
+  });
 
   return { ok: true, userId: uid, email, planId };
 }
@@ -149,21 +141,33 @@ export async function paystackWebhook(req: Request, res: Response) {
   }
 
   const reference: string | null = data.reference || data.subscription_code || null;
+  const existing = reference ? await prisma.payment.findUnique({ where: { reference } }) : null;
   if (reference) {
-    const existing = await prisma.payment.findFirst({ where: { reference } });
-    if (existing) {
+    if (existing?.status === "success") {
       res.status(200).json({ received: true, duplicate: true, reference });
       return;
     }
   }
 
   const email = extractEmail(data);
-  const userId = extractUserId(data);
-  const planId = extractPlanId(data);
+  const eventUserId = extractUserId(data);
+  if (existing?.userId && eventUserId && existing.userId !== eventUserId) {
+    console.error("Paystack reference user mismatch:", reference);
+    res.status(400).json({ received: true, error: "Payment account mismatch" });
+    return;
+  }
+  const userId = existing?.userId || eventUserId;
+  const planId = existing?.plan || extractPlanId(data);
   const amount = typeof data.amount === "number" ? data.amount / 100 : null;
 
   try {
-    const result = await activatePro({ userId, email, planId, reference, amount });
+    if (existing && (Math.round(amount || 0) !== Number(existing.amount || 0) || (existing.currency && data.currency !== existing.currency))) {
+      console.error("Paystack payment details mismatch:", reference);
+      res.status(400).json({ received: true, error: "Payment details mismatch" });
+      return;
+    }
+    const paymentMeta = existing?.meta as { days?: number } | null;
+    const result = await activatePro({ userId, email, planId, reference, amount, days: paymentMeta?.days });
     res.status(200).json({ received: true, ...result });
   } catch (err) {
     console.error("Paystack webhook processing failed:", err);

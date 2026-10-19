@@ -23,11 +23,11 @@ import { STUDENT_ROLES } from "./audience";
 
 export const FEATURES = [
   // students
-  { key: "courses", label: "Courses", group: "Students", hint: "My courses page and course suggestions", api: [] as string[] },
+  { key: "courses", label: "Courses", group: "Students", hint: "My courses page and course suggestions", api: ["/courses", "/me/courses", "/catalog/courses"] },
   { key: "programme", label: "Programme page", group: "Students", hint: "Department page, live programme updates and department feed", api: ["/department", "/feed"] },
   { key: "groups", label: "Study groups", group: "Students", hint: "Study groups, invites and group chat", api: ["/groups"] },
   { key: "materials", label: "Materials", group: "Students", hint: "Course material folders and the reading room", api: ["/material-saves"] },
-  { key: "readingHub", label: "Reading Hub", group: "Students", hint: "Reading Hub documents and reader", api: [] },
+  { key: "readingHub", label: "Reading Hub", group: "Students", hint: "Reading Hub documents and reader", api: ["/documents"] },
   { key: "reference", label: "Reference", group: "Students", hint: "Reference page", api: [] },
   { key: "timetable", label: "Timetable", group: "Students", hint: "Class timetable and scheduled classes", api: ["/timetable", "/class-events"] },
   { key: "courseRep", label: "Course Rep panel", group: "Students", hint: "Course Rep tools for scheduling and updates", api: [] },
@@ -35,7 +35,7 @@ export const FEATURES = [
   // aspirants
   { key: "utme", label: "UTME CBT", group: "Aspirants", hint: "UTME past-question practice, timed CBT and history", api: ["/utme"] },
   { key: "aspirantHouse", label: "Aspirant Houses", group: "Aspirants", hint: "Aspirant Houses, house threads and the House desk", api: ["/houses"] },
-  { key: "choices", label: "Institution choices", group: "Aspirants", hint: "The My choices page for aspirants", api: [] },
+  { key: "choices", label: "Institution choices", group: "Aspirants", hint: "The My choices page for aspirants", api: ["/aspirant/me"] },
   // everyone
   { key: "news", label: "News", group: "Everyone", hint: "Academicall News, the News desk and subscriptions", api: ["/news"] },
   { key: "vault", label: "Vault", group: "Everyone", hint: "PIN-locked personal Vault", api: ["/vault"] },
@@ -104,7 +104,7 @@ export async function saveFeatureState(state: FeatureState) {
 export const offList = (s: FeatureState) => Object.keys(s.off);
 
 /** Longest API prefix wins, so "/news" doesn't swallow an unrelated "/newsletter". */
-function featureForPath(path: string): string | null {
+export function featureForPath(path: string): string | null {
   let best: { key: string; len: number } | null = null;
   for (const f of FEATURES) {
     for (const p of f.api) {
