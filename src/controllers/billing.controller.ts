@@ -7,7 +7,21 @@ import { audit } from "../lib/audit";
 import { handle } from "../lib/http";
 
 const secret = () => process.env.PAYSTACK_SECRET_KEY || "";
-const appUrl = () => (process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || "https://academicall.pages.dev").replace(/\/$/, "");
+const PAYMENT_RETURN_ORIGINS = new Set(["https://academicall.site", "https://academicall.pages.dev"]);
+function paymentReturnOrigin(req: Request) {
+  const requestOrigin = req.get("origin");
+  if (requestOrigin && PAYMENT_RETURN_ORIGINS.has(requestOrigin)) return requestOrigin;
+  const configuredOrigin = process.env.PUBLIC_APP_URL;
+  if (configuredOrigin) {
+    try {
+      const origin = new URL(configuredOrigin).origin;
+      if (PAYMENT_RETURN_ORIGINS.has(origin)) return origin;
+    } catch (error) {
+      console.error("[billing] PUBLIC_APP_URL is invalid; using the primary site origin.", error);
+    }
+  }
+  return "https://academicall.site";
+}
 const uid = (req: Request) => req.user?.id;
 
 async function paystack(path: string, init?: RequestInit) {
@@ -82,6 +96,8 @@ export const checkout = handle(async (req, res) => {
   const reference = `ac_${plan.id}_${crypto.randomBytes(8).toString("hex")}`;
   await prisma.payment.create({ data: { userId: user.id, reference, plan: plan.id, amount: plan.amount, currency: "NGN", status: "pending", meta: { source: "checkout", days: plan.days } } });
   try {
+    const callbackUrl = new URL("/dashboard/upgrade", `${paymentReturnOrigin(req)}/`);
+    callbackUrl.searchParams.set("reference", reference);
     const data = await paystack("/transaction/initialize", {
       method: "POST",
       body: JSON.stringify({
@@ -89,7 +105,7 @@ export const checkout = handle(async (req, res) => {
         amount: plan.amount * 100,
         currency: "NGN",
         reference,
-        callback_url: `${appUrl()}/dashboard/upgrade?reference=${reference}`,
+        callback_url: callbackUrl.toString(),
         metadata: { userId: user.id, planId: plan.id, days: plan.days },
       }),
     });

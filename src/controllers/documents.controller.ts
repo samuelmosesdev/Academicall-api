@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { publishToScope } from "../lib/realtime";
 import { DEFAULT_INSTITUTION_ID, institutionOf, programmeScopeKey } from "../lib/scope";
 import { hasCap } from "../lib/access";
+import { MY_MATERIALS_LIMITS, personalUploadAccess } from "./myMaterials.controller";
 
 function isStaff(role?: string) {
   return ["admin", "alphaAgent", "agent"].includes(role || "");
@@ -141,6 +142,7 @@ const createSchema = z.object({
   level: z.string().optional().nullable(),
   status: z.enum(["pending", "approved", "rejected"]).optional(),
   institutionId: z.string().min(1).optional(),
+  folderId: z.string().min(1).optional().nullable(), // personal uploads only
 });
 
 function normalizeScope(value: unknown) {
@@ -182,8 +184,22 @@ export async function createDocument(req: Request, res: Response) {
       select: { plan: true, courseRepMeta: true, autoPublish: true, institutionId: true },
     });
     if (!uploader) return res.status(401).json({ error: "User not found" });
-    if (isStudent && uploader.plan === "free") {
-      return res.status(403).json({ error: "A premium plan is required to upload personal materials" });
+    if (isStudent) {
+      const access = await personalUploadAccess(req.user.id, req.user.role);
+      if (!access.allowed) {
+        return res.status(402).json({ error: "Uploading your own materials is a premium feature.", code: "premium_required", feature: "materialUploads" });
+      }
+      const used = await prisma.document.count({ where: { uploadedById: req.user.id, source: "personal", deletedAt: null } });
+      if (used >= MY_MATERIALS_LIMITS.maxFiles) {
+        return res.status(400).json({ error: `You've reached ${MY_MATERIALS_LIMITS.maxFiles} files. Delete some to upload more.` });
+      }
+      if (body.fileSize && body.fileSize > MY_MATERIALS_LIMITS.maxFileMb * 1048576) {
+        return res.status(400).json({ error: `Files can be up to ${MY_MATERIALS_LIMITS.maxFileMb} MB.` });
+      }
+      if (body.folderId) {
+        const folder = await prisma.materialFolder.findFirst({ where: { id: body.folderId, userId: req.user.id }, select: { id: true } });
+        if (!folder) return res.status(400).json({ error: "Folder not found" });
+      }
     }
     if (!staff && !isCourseRep && !isStudent) {
       return res.status(403).json({ error: "You don't have permission to upload materials" });
@@ -232,7 +248,7 @@ export async function createDocument(req: Request, res: Response) {
         }
       }
     }
-    const { program: requestedProgram, ...documentBody } = body;
+    const { program: requestedProgram, folderId: _folderId, ...documentBody } = body;
     const status = isStudent || isCourseRep
       ? "approved"
       : body.status || (staff || uploader.autoPublish ? "approved" : "pending");
@@ -241,7 +257,7 @@ export async function createDocument(req: Request, res: Response) {
         ...documentBody,
         institutionId,
         ...(isStudent
-          ? { courseId: null, faculty: null, department: null, level: null, source: "personal" }
+          ? { courseId: null, faculty: null, department: null, level: null, source: "personal", folderId: body.folderId || null }
           : isCourseRep
             ? { department: assignedProgram, level, source: "courseRep" }
             : requestedProgram

@@ -150,6 +150,7 @@ model User {
   paymentClaims         PaymentClaim[]
   timetableEvents       TimetableEvent[]
   materialSaves         MaterialSave[]
+  materialFolders       MaterialFolder[]
   requests              Request[]              @relation("Requester")
   profileChangeRequests ProfileChangeRequest[]
   subscriptions         Subscription[]
@@ -216,10 +217,13 @@ model Document {
   reactions           Json? // { like: number, ... }
   deletedAt           DateTime? // soft delete: recoverable from the Document Center
   deletedById         String?
+  folderId            String? // personal uploads: the student's own MaterialFolder (null = top level)
+  folder              MaterialFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
   @@index([uploadedById])
+  @@index([folderId])
   @@index([deletedAt])
   @@index([courseId])
   @@index([status])
@@ -506,10 +510,33 @@ model MaterialSave {
   title      String?
   url        String?
   meta       Json?
+  folderId   String? // moved into one of the student's own folders (null = grouped by course)
+  folder     MaterialFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
 
   @@index([userId])
+  @@index([folderId])
   @@map("material_saves")
+}
+
+/// A student's own folder in My materials. Folders can sit inside folders (max 3 deep).
+model MaterialFolder {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    MaterialFolder?  @relation("MaterialFolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  MaterialFolder[] @relation("MaterialFolderTree")
+  name      String
+  color     String           @default("violet")
+  position  Int              @default(0)
+  documents Document[]
+  saves     MaterialSave[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([userId, parentId])
+  @@map("material_folders")
 }
 
 model FeedPost {

@@ -24,6 +24,7 @@ import * as realtimeCtrl from "../controllers/realtime.controller";
 import express from "express";
 import { authLimits as L, rateLimit } from "../middleware/rateLimit";
 import * as vaultCtrl from "../controllers/vault.controller";
+import * as myMaterialsCtrl from "../controllers/myMaterials.controller";
 import * as newsCtrl from "../controllers/news.controller";
 import { feedSocial, classSocial, updateClassEvent } from "../controllers/programme.controller";
 import * as aspCtrl from "../controllers/aspirant.controller";
@@ -325,6 +326,17 @@ router.delete("/secretariat/records/:id", authenticate, secCtrl.requireSecretari
 router.get("/secretariat/activity", authenticate, secCtrl.requireSecretariat, secCtrl.activityJournal);
 
 // Documents
+// My materials: students' own uploads, saved materials and folders
+router.get("/my-materials", authenticate, myMaterialsCtrl.overview);
+router.post("/my-materials/folders", authenticate, myMaterialsCtrl.createFolder);
+router.patch("/my-materials/folders/:id", authenticate, myMaterialsCtrl.updateFolder);
+router.delete("/my-materials/folders/:id", authenticate, myMaterialsCtrl.deleteFolder);
+router.post("/my-materials/move", authenticate, myMaterialsCtrl.moveItems);
+router.post("/my-materials/remove", authenticate, myMaterialsCtrl.removeItems);
+router.patch("/my-materials/uploads/:id", authenticate, myMaterialsCtrl.renameUpload);
+router.patch("/my-materials/saves/:id", authenticate, myMaterialsCtrl.renameSave);
+
+router.get("/documents/mine", authenticate, docsCtrl.listMyDocuments);
 router.get("/documents", authenticate, docsCtrl.listDocuments);
 router.get("/documents/:id", authenticate, docsCtrl.getDocument);
 router.post("/documents", authenticate, docsCtrl.createDocument);
