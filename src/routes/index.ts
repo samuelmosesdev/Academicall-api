@@ -42,6 +42,7 @@ import * as testsCtrl from "../controllers/tests.controller";
 import * as searchCtrl from "../controllers/search.controller";
 import * as dataCtrl from "../controllers/dataAdmin.controller";
 import * as boardCtrl from "../controllers/board.controller";
+import * as sharesCtrl from "../controllers/materialShares.controller";
 
 const router = Router();
 const userKey = (r: any) => String(r.user?.id || r.ip);
@@ -62,6 +63,8 @@ router.put("/admin/billing/users/:id", authenticate, requireCap("payments.review
 router.use(premiumGate);
 router.get("/admin/features", authenticate, requireCap("settings.manage"), featuresCtrl.adminFeatures);
 router.put("/admin/features/:key", authenticate, requireCap("settings.manage"), featuresCtrl.setFeature);
+router.get("/admin/pro-features", authenticate, requireCap("settings.manage", "features.pro"), sharesCtrl.proFeatures);
+router.put("/admin/pro-features/:key", authenticate, requireCap("settings.manage", "features.pro"), sharesCtrl.setProFeature);
 router.put("/admin/maintenance", authenticate, requireCap("settings.manage"), featuresCtrl.setMaintenance);
 router.put("/admin/banner", authenticate, requireCap("settings.manage"), featuresCtrl.setBanner);
 router.get("/admin/beta-testers", authenticate, requireCap("settings.manage"), featuresCtrl.listBetaTesters);
@@ -290,6 +293,7 @@ router.patch("/users/me", authenticate, usersCtrl.updateMe);
 router.get("/users", authenticate, requireStaff, usersCtrl.listUsers);
 router.get("/users/course-rep-status", authenticate, usersCtrl.courseRepStatus);
 router.post("/users/agents", authenticate, requireCap("staff.manage"), usersCtrl.createAgent);
+router.get("/users/:id/materials", authenticate, requireCap("users.view"), sharesCtrl.userMaterials);
 router.get("/users/:id", authenticate, requireCap("users.view"), usersCtrl.getUser);
 router.patch("/users/:id", authenticate, requireStaff, usersCtrl.adminUpdateUser); // field-level checks inside
 router.put("/users/:id/access", authenticate, requireStaff, usersCtrl.updateAccess);
@@ -335,6 +339,16 @@ router.post("/my-materials/move", authenticate, myMaterialsCtrl.moveItems);
 router.post("/my-materials/remove", authenticate, myMaterialsCtrl.removeItems);
 router.patch("/my-materials/uploads/:id", authenticate, myMaterialsCtrl.renameUpload);
 router.patch("/my-materials/saves/:id", authenticate, myMaterialsCtrl.renameSave);
+
+// Material sharing: send a file or folder to someone by Unique ID (feature "materialSharing"; Pro only gates sending)
+const shareLookupLimit = rateLimit({ name: "share-lookup", windowMs: 10 * 60_000, max: 40, key: userKey, message: "Too many lookups. Wait a few minutes." });
+const shareSendLimit = rateLimit({ name: "share-send", windowMs: 10 * 60_000, max: 30, key: userKey, message: "You're sharing quickly. Wait a few minutes." });
+router.get("/material-shares", authenticate, sharesCtrl.listShares);
+router.get("/material-shares/recipient", authenticate, shareLookupLimit, sharesCtrl.lookupRecipient);
+router.post("/material-shares", authenticate, shareSendLimit, sharesCtrl.sendShare);
+router.post("/material-shares/:id/accept", authenticate, sharesCtrl.acceptShare);
+router.post("/material-shares/:id/decline", authenticate, sharesCtrl.declineShare);
+router.delete("/material-shares/:id", authenticate, sharesCtrl.cancelShare);
 
 router.get("/documents/mine", authenticate, docsCtrl.listMyDocuments);
 router.get("/documents", authenticate, docsCtrl.listDocuments);

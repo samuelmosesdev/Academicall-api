@@ -50,6 +50,7 @@ export const CAPABILITIES = [
   { key: "payments.review", group: "Operations", scope: "staff", label: "Payments", hint: "Review and approve payment claims" },
   { key: "activity.view", group: "Operations", scope: "staff", label: "Activity & audit", hint: "Read the activity log and audit trail" },
   { key: "notifications.send", group: "Operations", scope: "staff", label: "Send notifications", hint: "Send notifications to users" },
+  { key: "features.pro", group: "Operations", scope: "staff", label: "Pro or free features", hint: "Decide which features are Pro (paid) and which are free for everyone" },
   // Secretariat
   { key: "secretariat.records", group: "Secretariat", scope: "secretary", label: "Keep records", hint: "Write and file memos, minutes, letters and reports" },
   { key: "secretariat.confidential", group: "Secretariat", scope: "secretary", label: "Confidential records", hint: "Open records marked confidential" },
@@ -64,7 +65,7 @@ const ALL_STAFF = CAPABILITIES.filter((c) => c.scope === "staff").map((c) => c.k
 const ALL_SECRETARY = CAPABILITIES.filter((c) => c.scope === "secretary").map((c) => c.key);
 
 export const ROLE_DEFAULTS: Record<string, string[]> = {
-  alphaAgent: ALL_STAFF.filter((k) => !["users.delete", "users.secretary", "academics.manage", "users.houseLeader", "houses.manage", "board.manage"].includes(k)),
+  alphaAgent: ALL_STAFF.filter((k) => !["users.delete", "users.secretary", "academics.manage", "users.houseLeader", "houses.manage", "board.manage", "features.pro"].includes(k)),
   agent: ["users.view", "documents.review", "documents.manage", "courses.manage", "cbt.manage", "utme.manage", "announcements.publish", "feeds.moderate", "moderation.manage", "tests.manage", "requests.review"],
 };
 export const TAG_DEFAULTS: Record<string, string[]> = {

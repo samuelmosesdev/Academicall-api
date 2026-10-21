@@ -151,6 +151,8 @@ model User {
   timetableEvents       TimetableEvent[]
   materialSaves         MaterialSave[]
   materialFolders       MaterialFolder[]
+  materialSharesSent    MaterialShare[]        @relation("MaterialShareSender")
+  materialSharesInbox   MaterialShare[]        @relation("MaterialShareRecipient")
   requests              Request[]              @relation("Requester")
   profileChangeRequests ProfileChangeRequest[]
   subscriptions         Subscription[]
@@ -537,6 +539,35 @@ model MaterialFolder {
 
   @@index([userId, parentId])
   @@map("material_folders")
+}
+
+/// A file or folder from My materials sent to another user (found by their Unique ID).
+/// The recipient accepts (a copy lands in their own library) or declines.
+/// Item ids are soft references: the sender may delete the original before it is accepted.
+model MaterialShare {
+  id             String    @id @default(uuid())
+  senderId       String
+  sender         User      @relation("MaterialShareSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipientId    String
+  recipient      User      @relation("MaterialShareRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  kind           String // "file" | "folder"
+  itemType       String // "upload" | "save" | "folder"
+  itemId         String
+  title          String
+  /// Folder shares: how many files and folders were inside when sent
+  fileCount      Int       @default(0)
+  folderCount    Int       @default(0)
+  comment        String?
+  status         String    @default("pending") // pending | accepted | declined | cancelled
+  /// Where the copy landed in the recipient's library (folder shares)
+  copiedFolderId String?
+  respondedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([recipientId, status])
+  @@index([senderId, createdAt])
+  @@map("material_shares")
 }
 
 model FeedPost {
