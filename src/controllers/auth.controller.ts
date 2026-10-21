@@ -545,6 +545,12 @@ export async function me(req: Request, res: Response) {
         mutedUntil: true,
         utmeExamDate: true,
         utmeDailyTarget: true,
+        coursesEnrolledCount: true,
+        questionsPracticedCount: true,
+        studyStreakDays: true,
+        materialsOpenedCount: true,
+        lastActiveDate: true,
+        lastActiveAt: true,
         aspirations: {
           orderBy: { rank: "asc" },
           select: { rank: true, course: true, programId: true, institutionId: true, institution: { select: { id: true, name: true, displayName: true, abbreviation: true, state: true } } },

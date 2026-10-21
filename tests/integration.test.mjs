@@ -177,7 +177,16 @@ async function main() {
       assert.equal(otherTree.derivedDepartments, true);
     });
     await test("profile update validates the hierarchy top-down", async () => {
-      const u = await makeUser({ institutionId: null });
+      const lastActiveAt = new Date("2026-10-21T12:00:00.000Z");
+      const u = await makeUser({
+        institutionId: null,
+        coursesEnrolledCount: 7,
+        questionsPracticedCount: 21,
+        studyStreakDays: 4,
+        materialsOpenedCount: 9,
+        lastActiveDate: "2026-10-21",
+        lastActiveAt,
+      });
       const f = otherTree.faculties[0], d = f.departments[0], p = d.programs[0];
       const ok = await call(u.token, "PATCH", "/users/me", { institutionId: other.id, facultyId: f.id, departmentId: d.id, programId: p.id });
       assert.equal(ok.status, 200, JSON.stringify(ok.data));
@@ -188,6 +197,12 @@ async function main() {
       assert.equal(bad.status, 400);
       const me = await call(u.token, "GET", "/auth/me");
       assert.equal(me.data.user.institution.id, other.id);
+      assert.equal(me.data.user.coursesEnrolledCount, 7);
+      assert.equal(me.data.user.questionsPracticedCount, 21);
+      assert.equal(me.data.user.studyStreakDays, 4);
+      assert.equal(me.data.user.materialsOpenedCount, 9);
+      assert.equal(me.data.user.lastActiveDate, "2026-10-21");
+      assert.equal(new Date(me.data.user.lastActiveAt).toISOString(), lastActiveAt.toISOString());
     });
     await test("users cannot change their own course-rep scope", async () => {
       const rep = await makeUser({ role: "courseRep", courseRepMeta: { program: "Computer Science", level: "300 Level" } });
