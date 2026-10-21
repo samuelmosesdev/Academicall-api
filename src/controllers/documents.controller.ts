@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { publishToScope } from "../lib/realtime";
-import { DEFAULT_INSTITUTION_ID, institutionOf, programmeScopeKey } from "../lib/scope";
+import { DEFAULT_INSTITUTION_ID, institutionOf, norm, normLevel, programmeScope, programmeScopeKey } from "../lib/scope";
 import { hasCap } from "../lib/access";
 import { MY_MATERIALS_LIMITS, personalUploadAccess } from "./myMaterials.controller";
 
@@ -167,6 +167,78 @@ function broadcastMaterial(document: {
     type: "programme.material",
     data: { action, item: action === "deleted" ? { id: document.id } : document, level: document.level },
   });
+}
+
+const materialReactionSchema = z.object({ type: z.enum(["like", "haha", "love"]) }).strict();
+
+export async function reactToDocument(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  const parsed = materialReactionSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Unknown reaction" });
+
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      name: true,
+      nickname: true,
+      role: true,
+      institutionId: true,
+      department: true,
+      program: true,
+      level: true,
+      courseRepMeta: true,
+    },
+  });
+  if (!user) return res.status(401).json({ error: "User not found" });
+
+  try {
+    const document = await prisma.$transaction(async (tx) => {
+      const id = String(req.params.id);
+      await tx.$queryRawUnsafe('SELECT "id" FROM "documents" WHERE "id" = $1 FOR UPDATE', id);
+      const existing = await tx.document.findUnique({ where: { id } });
+      if (!existing || existing.deletedAt || existing.source === "personal") {
+        throw Object.assign(new Error("Document not found"), { status: 404 });
+      }
+      if (!(await canAccessInstitution(user.id, user.role, existing.institutionId))) {
+        throw Object.assign(new Error("Document not found"), { status: 404 });
+      }
+      if (!isStaff(user.role)) {
+        if (existing.status !== "approved") {
+          throw Object.assign(new Error("Document not found"), { status: 404 });
+        }
+        const scope = programmeScope(user);
+        if (existing.department && norm(existing.department) !== norm(scope)) {
+          throw Object.assign(new Error("Document not found"), { status: 404 });
+        }
+        const meta = user.courseRepMeta as { level?: string } | null;
+        const level = meta?.level || user.level || "";
+        if (existing.level && normLevel(existing.level) !== normLevel(level)) {
+          throw Object.assign(new Error("Document not found"), { status: 404 });
+        }
+      }
+
+      const reactions: any[] = Array.isArray(existing.reactions) ? [...existing.reactions] : [];
+      const index = reactions.findIndex((reaction) => reaction?.uid === user.id);
+      if (index >= 0) {
+        if (reactions[index].type === parsed.data.type) reactions.splice(index, 1);
+        else reactions[index] = { uid: user.id, type: parsed.data.type, name: user.nickname || user.name || "Student" };
+      } else {
+        reactions.push({ uid: user.id, type: parsed.data.type, name: user.nickname || user.name || "Student" });
+      }
+      return tx.document.update({
+        where: { id: existing.id },
+        data: { reactions: reactions as Prisma.InputJsonValue },
+      });
+    });
+    broadcastMaterial(document, "updated");
+    return res.json({ document });
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    if (status) return res.status(status).json({ error: (error as Error).message });
+    console.error("[documents] Failed to update material reaction:", error);
+    return res.status(500).json({ error: "Could not save reaction" });
+  }
 }
 
 export async function createDocument(req: Request, res: Response) {

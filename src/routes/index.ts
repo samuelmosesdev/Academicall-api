@@ -38,6 +38,7 @@ import * as securityCtrl from "../controllers/security.controller";
 import * as meCtrl from "../controllers/me.controller";
 import * as modCtrl from "../controllers/moderation.controller";
 import * as utmeInsightsCtrl from "../controllers/utmeInsights.controller";
+import * as practiceCtrl from "../controllers/practice.controller";
 import * as testsCtrl from "../controllers/tests.controller";
 import * as searchCtrl from "../controllers/search.controller";
 import * as dataCtrl from "../controllers/dataAdmin.controller";
@@ -202,6 +203,9 @@ router.get("/news/:slug", newsCtrl.optionalAuth, newsCtrl.getNews);
 // UTME CBT practice history (the bank itself is static in the web app)
 // UTME control room: every editor endpoint is guarded by its own capability.
 const utmeMediaUpload = express.raw({ type: () => true, limit: "7mb" });
+router.get("/practice/history", authenticate, practiceCtrl.getHistory);
+router.post("/practice/attempts", authenticate, practiceCtrl.saveAttempt);
+router.post("/practice/history/import", authenticate, practiceCtrl.importHistory);
 router.get("/utme/patches", utmeAdminCtrl.publicPatches);
 router.get("/utme/media/:id", utmeAdminCtrl.media);
 router.get("/admin/utme/summary", authenticate, requireCap("utme.manage"), utmeAdminCtrl.summary);
@@ -352,6 +356,7 @@ router.delete("/material-shares/:id", authenticate, sharesCtrl.cancelShare);
 
 router.get("/documents/mine", authenticate, docsCtrl.listMyDocuments);
 router.get("/documents", authenticate, docsCtrl.listDocuments);
+router.post("/documents/:id/reactions", authenticate, docsCtrl.reactToDocument);
 router.get("/documents/:id", authenticate, docsCtrl.getDocument);
 router.post("/documents", authenticate, docsCtrl.createDocument);
 router.patch("/documents/:id", authenticate, docsCtrl.updateDocument);

@@ -16,6 +16,7 @@ import {
   displayName, institutionOf, isStaffRole, loadScopedUser, norm, normLevel,
   programmeScope, programmeScopeKey, ScopedUser,
 } from "../lib/scope";
+import { premiumStatus } from "../lib/billing";
 
 const REACTION_TYPES = ["like", "haha", "love"] as const;
 
@@ -97,11 +98,27 @@ function toggle(list: any[], user: ScopedUser, type: string) {
 
 function handlers(target: Target) {
   return {
-    addComment: (req: Request, res: Response) => {
+    addComment: async (req: Request, res: Response) => {
       const muted = mutedMessage(req);
       if (muted) return res.status(403).json({ error: muted, code: "muted" });
       const parsed = commentSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "Write a comment first (up to 2,000 characters)." });
+      const anonymous = parsed.data.anonymous === true;
+      const account = anonymous && req.user
+        ? await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { allowAnonymousComments: true },
+          })
+        : null;
+      const canCommentAnonymously = Boolean(
+        anonymous &&
+        account?.allowAnonymousComments &&
+        req.user &&
+        (await premiumStatus(req.user.id)).active,
+      );
+      if (anonymous && !canCommentAnonymously) {
+        return res.status(403).json({ error: "Anonymous comments are available to eligible Pro accounts only." });
+      }
       return mutateSocial(req, res, target, (row, user) => {
         const comments = Array.isArray(row.comments) ? [...row.comments] : [];
         if (comments.length >= 1000) return { error: "This thread is full.", status: 400 };
@@ -109,9 +126,10 @@ function handlers(target: Target) {
           id: randomUUID(),
           text: parsed.data.text,
           authorUid: user.id,
-          authorName: displayName(user),
-          authorPhoto: user.photoUrl || user.avatarUrl || null,
-          authorRole: user.role,
+          authorName: canCommentAnonymously ? "Anonymous" : displayName(user),
+          authorPhoto: canCommentAnonymously ? null : user.photoUrl || user.avatarUrl || null,
+          authorRole: canCommentAnonymously ? "user" : user.role,
+          isAnonymous: canCommentAnonymously,
           createdAt: new Date().toISOString(),
           reactions: [],
         });
