@@ -469,31 +469,33 @@ router.post("/institutions/:id/faculties", authenticate, requireAdmin, instituti
 router.post("/faculties/:id/departments", authenticate, requireAdmin, institutionsCtrl.createDepartment);
 router.post("/academic-departments/:id/programs", authenticate, requireAdmin, institutionsCtrl.createProgram);
 
-// Admin: academic structure + course catalogue
-const acad = [authenticate, requireCap("academics.manage")];
+// Academic reads and course assignments are also available to course managers.
+// Editing the institution structure itself remains limited to academic managers.
+const acad = [authenticate, requireCap("academics.manage", "courses.manage")];
+const acadStructure = [authenticate, requireCap("academics.manage")];
 router.get("/admin/academics/summary", ...acad, acadCtrl.summary);
 router.get("/admin/academics/institutions", ...acad, acadCtrl.listInstitutions);
-router.post("/admin/academics/institutions", ...acad, acadCtrl.createInstitution);
+router.post("/admin/academics/institutions", ...acadStructure, acadCtrl.createInstitution);
 router.get("/admin/academics/institutions/:id", ...acad, acadCtrl.getInstitution);
-router.patch("/admin/academics/institutions/:id", ...acad, acadCtrl.updateInstitution);
-router.delete("/admin/academics/institutions/:id", ...acad, acadCtrl.deleteInstitution);
+router.patch("/admin/academics/institutions/:id", ...acadStructure, acadCtrl.updateInstitution);
+router.delete("/admin/academics/institutions/:id", ...acadStructure, acadCtrl.deleteInstitution);
 router.get("/admin/academics/institutions/:id/faculties", ...acad, acadCtrl.listFaculties);
-router.post("/admin/academics/institutions/:id/faculties", ...acad, acadCtrl.createFaculty);
-router.patch("/admin/academics/faculties/:id", ...acad, acadCtrl.updateFaculty);
-router.delete("/admin/academics/faculties/:id", ...acad, acadCtrl.deleteFaculty);
+router.post("/admin/academics/institutions/:id/faculties", ...acadStructure, acadCtrl.createFaculty);
+router.patch("/admin/academics/faculties/:id", ...acadStructure, acadCtrl.updateFaculty);
+router.delete("/admin/academics/faculties/:id", ...acadStructure, acadCtrl.deleteFaculty);
 router.get("/admin/academics/faculties/:id/departments", ...acad, acadCtrl.listDepartments);
-router.post("/admin/academics/faculties/:id/departments", ...acad, acadCtrl.createDepartment);
-router.patch("/admin/academics/departments/:id", ...acad, acadCtrl.updateDepartment);
-router.delete("/admin/academics/departments/:id", ...acad, acadCtrl.deleteDepartment);
+router.post("/admin/academics/faculties/:id/departments", ...acadStructure, acadCtrl.createDepartment);
+router.patch("/admin/academics/departments/:id", ...acadStructure, acadCtrl.updateDepartment);
+router.delete("/admin/academics/departments/:id", ...acadStructure, acadCtrl.deleteDepartment);
 router.get("/admin/academics/departments/:id/programmes", ...acad, acadCtrl.listProgrammes);
-router.post("/admin/academics/departments/:id/programmes", ...acad, acadCtrl.createProgramme);
+router.post("/admin/academics/departments/:id/programmes", ...acadStructure, acadCtrl.createProgramme);
 router.get("/admin/academics/departments/:id/courses", ...acad, acadCtrl.listDepartmentCourses);
 router.post("/admin/academics/departments/:id/courses", ...acad, acadCtrl.assignDepartmentCourse);
 router.delete("/admin/academics/departments/:id/courses/:linkId", ...acad, acadCtrl.unassignDepartmentCourse);
-router.patch("/admin/academics/programmes/:id", ...acad, acadCtrl.updateProgramme);
-router.delete("/admin/academics/programmes/:id", ...acad, acadCtrl.deleteProgramme);
-router.post("/admin/academics/programmes/:id/curricula", ...acad, acadCtrl.linkCurriculum);
-router.delete("/admin/academics/programmes/:id/curricula/:curriculumId", ...acad, acadCtrl.unlinkCurriculum);
+router.patch("/admin/academics/programmes/:id", ...acadStructure, acadCtrl.updateProgramme);
+router.delete("/admin/academics/programmes/:id", ...acadStructure, acadCtrl.deleteProgramme);
+router.post("/admin/academics/programmes/:id/curricula", ...acadStructure, acadCtrl.linkCurriculum);
+router.delete("/admin/academics/programmes/:id/curricula/:curriculumId", ...acadStructure, acadCtrl.unlinkCurriculum);
 router.get("/admin/academics/courses", ...acad, acadCtrl.listCatalogCourses);
 router.post("/admin/academics/courses", ...acad, acadCtrl.createCatalogCourse);
 router.get("/admin/academics/courses/:id", ...acad, acadCtrl.getCatalogCourse);
@@ -503,7 +505,7 @@ router.post("/admin/academics/courses/:id/restore", ...acad, acadCtrl.archiveCat
 router.delete("/admin/academics/courses/:id", ...acad, acadCtrl.deleteCatalogCourse);
 router.get("/admin/academics/curricula", ...acad, acadCtrl.listCurricula);
 router.get("/admin/academics/curricula/:id", ...acad, acadCtrl.getCurriculum);
-router.patch("/admin/academics/curricula/:id", ...acad, acadCtrl.updateCurriculum);
+router.patch("/admin/academics/curricula/:id", ...acadStructure, acadCtrl.updateCurriculum);
 
 // Study groups
 router.get("/groups", authenticate, groupsCtrl.listMyGroups);
