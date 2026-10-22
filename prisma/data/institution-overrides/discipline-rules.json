@@ -1,0 +1,350 @@
+{
+  "_about": [
+    "Clean-up rules for every institution that has no curated override (everything except the University of Abuja and the files next to this one).",
+    "JAMB IBASS lists programmes under broad 'faculty groups' (MEDICAL, ADMINISTRATION, ENGINEERING/TECH/ENV ...), not real faculties.",
+    "1. groupLabels renames each JAMB group to a neutral, readable discipline grouping (NUC CCMAS discipline names) that does not claim a faculty the school may not have.",
+    "2. programmeRules then moves single programmes out of a group, by programme name. First matching rule wins. 'from' lists the group labels the rule applies to; 'types' (optional) limits it to Degree / ND / NCE institutions; 'match' are case-insensitive regular expressions tested against the cleaned programme name.",
+    "3. Names are title-cased (only when they are ALL CAPS), trailing colons dropped, abbreviations in 'abbreviations' expanded, words in 'acronyms' kept upper-case, words in 'smallWords' kept lower-case.",
+    "Edit this file and redeploy: the boot-time pass (src/lib/institutionOverrides.ts) notices the change and re-applies, keeping every row id. Then run scripts/clean-institutions-data.ts to refresh institutions.json.gz for fresh installs.",
+    "A rule with \"onlyIfGroupExists\": true only moves a programme when the institution already has that grouping (e.g. Accounting listed under Social Sciences joins Management Sciences only where JAMB also lists an ADMINISTRATION group).",
+    "'institutionAcronyms' are kept in capitals when an institution's display name is derived from its official name."
+  ],
+  "groupLabels": {
+    "ADMINISTRATION": "Management Sciences",
+    "AGRICULTURE": "Agriculture",
+    "ARTS": "Arts and Humanities",
+    "ARTS AND HUMANITIES": "Arts and Humanities",
+    "EDUCATION": "Education",
+    "ENGINEERING": "Engineering and Technology",
+    "ENGINEERING/TECH/ENV": "Engineering and Technology",
+    "HEALTH": "Health Sciences",
+    "LAW": "Law",
+    "MEDICAL": "Health Sciences",
+    "MED/PHARM/HEALTH SCIENCES": "Health Sciences",
+    "SCIENCES": "Sciences",
+    "SOCIAL SCIENCES": "Social Sciences"
+  },
+  "programmeRules": [
+    {
+      "group": "Medicine and Dentistry",
+      "from": [
+        "Health Sciences"
+      ],
+      "types": [
+        "Degree"
+      ],
+      "match": [
+        "^medicine( and| &) surgery$",
+        "^m\\.?b\\.?b\\.?s\\.?$",
+        "^dentistry$",
+        "^dental surgery$",
+        "^dentistry( and| &) dental surgery$"
+      ]
+    },
+    {
+      "group": "Pharmaceutical Sciences",
+      "from": [
+        "Health Sciences"
+      ],
+      "types": [
+        "Degree"
+      ],
+      "match": [
+        "^pharmacy$",
+        "^doctor of pharmacy$",
+        "^pharm\\.? ?d\\.?$",
+        "^pharmaceutical sciences?$"
+      ]
+    },
+    {
+      "group": "Veterinary Medicine",
+      "from": [
+        "Health Sciences",
+        "Agriculture"
+      ],
+      "types": [
+        "Degree"
+      ],
+      "match": [
+        "^(doctor of )?veterinary medicine$"
+      ]
+    },
+    {
+      "group": "Basic Medical Sciences",
+      "from": [
+        "Health Sciences"
+      ],
+      "types": [
+        "Degree"
+      ],
+      "match": [
+        "^(human )?anatomy$",
+        "^(human )?physiology$",
+        "^(medical )?biochemistry$",
+        "^pharmacology$",
+        "^pharmacology( and| &) therapeutics$"
+      ]
+    },
+    {
+      "group": "Environmental Sciences",
+      "from": [
+        "Engineering and Technology"
+      ],
+      "match": [
+        "architect",
+        "landscape",
+        "interior design",
+        "^estate management",
+        "quantity surveying",
+        "urban( and| &) regional planning",
+        "^building( technology)?$",
+        "^surveying",
+        "geo-?informatics",
+        "^land( and| &) surveying",
+        "^fine( and| &|/)? ?(applied )?arts?$",
+        "^fine arts?( and| &|/)",
+        "geography",
+        "^environmental (management|resources management|science( and| &) management)"
+      ]
+    },
+    {
+      "group": "Environmental Sciences",
+      "from": [
+        "Agriculture",
+        "Sciences",
+        "Social Sciences",
+        "Arts and Humanities",
+        "Management Sciences"
+      ],
+      "match": [
+        "^architecture$",
+        "^architectural technology$",
+        "^estate management( and| &)? ?(valuation)?$",
+        "^quantity surveying$",
+        "^urban( and| &) regional planning$",
+        "^surveying( and| &) geo-?informatics$",
+        "^building( technology)?$"
+      ]
+    },
+    {
+      "group": "Social Sciences",
+      "from": [
+        "Law"
+      ],
+      "match": [
+        "criminolog",
+        "security studies"
+      ]
+    },
+    {
+      "group": "Computing",
+      "from": [
+        "Sciences",
+        "Engineering and Technology"
+      ],
+      "types": [
+        "Degree"
+      ],
+      "match": [
+        "^computer science$",
+        "^cyber ?security( science)?$",
+        "^software engineering$",
+        "^information technology$",
+        "^information systems$",
+        "^data science$",
+        "^computer information (systems|science)$",
+        "^computing$",
+        "^artificial intelligence$"
+      ]
+    },
+    {
+      "group": "Management Sciences",
+      "from": [
+        "Social Sciences"
+      ],
+      "onlyIfGroupExists": true,
+      "match": [
+        "^accounting$",
+        "^accountancy$",
+        "^banking( and| &) finance$",
+        "^business administration$",
+        "^business management$",
+        "^marketing$",
+        "^insurance$",
+        "^actuarial science$",
+        "^entrepreneurship$",
+        "^procurement management$",
+        "^human resources? management$"
+      ]
+    }
+  ],
+  "abbreviations": {
+    "MGT": "MANAGEMENT",
+    "MGT.": "MANAGEMENT",
+    "MGMT": "MANAGEMENT",
+    "MGMT.": "MANAGEMENT",
+    "TECH": "TECHNOLOGY",
+    "TECH.": "TECHNOLOGY",
+    "SCI": "SCIENCE",
+    "SCI.": "SCIENCE",
+    "EDUC": "EDUCATION",
+    "EDUC.": "EDUCATION",
+    "APPL": "APPLIED",
+    "APPL.": "APPLIED",
+    "MATHS": "MATHEMATICS",
+    "GOVT": "GOVERNMENT",
+    "GOVT.": "GOVERNMENT",
+    "SUPLY": "SUPPLY",
+    "SCEINCE": "SCIENCE",
+    "PROSTEHETICS": "PROSTHETICS",
+    "TECHCHNOLOGY": "TECHNOLOGY",
+    "ENVRIONMENTAL": "ENVIRONMENTAL",
+    "ADMIN": "ADMINISTRATION",
+    "ADMIN.": "ADMINISTRATION"
+  },
+  "_abbreviationsNote": "AGRIC is handled in code: 'AGRIC ECONOMICS' / 'AGRIC-ECONOMICS' -> 'Agricultural Economics', a trailing 'AGRIC' -> 'Agriculture'.",
+  "acronyms": [
+    "ND",
+    "NCE",
+    "HND",
+    "OND",
+    "ICT",
+    "IT",
+    "GIS",
+    "CRS",
+    "IRS",
+    "HIV",
+    "AIDS",
+    "UTME",
+    "FCT",
+    "NYSC",
+    "PGD",
+    "PHD",
+    "MBBS",
+    "BDS",
+    "DVM",
+    "II",
+    "III",
+    "IV",
+    "VI",
+    "ECWA",
+    "COE",
+    "CNS",
+    "UK",
+    "USA",
+    "ABU",
+    "UNN",
+    "OAU",
+    "TV",
+    "ICAN",
+    "ACCA",
+    "ANAN",
+    "CIBN",
+    "NTA",
+    "AI",
+    "STEM",
+    "D.M"
+  ],
+  "dottedForms": {
+    "B.SC.": "B.Sc.",
+    "B.SC": "B.Sc.",
+    "B.ED.": "B.Ed.",
+    "B.ED": "B.Ed.",
+    "B.A.": "B.A.",
+    "B.A": "B.A.",
+    "ED.": "Ed.",
+    "LL.B": "LL.B.",
+    "LL.B.": "LL.B.",
+    "ST.": "St."
+  },
+  "smallWords": [
+    "and",
+    "of",
+    "the",
+    "in",
+    "for",
+    "to",
+    "on",
+    "at",
+    "with",
+    "by",
+    "or",
+    "&"
+  ],
+  "institutionAcronyms": [
+    "OAU",
+    "BUK",
+    "ABU",
+    "UNN",
+    "UI",
+    "UDU",
+    "UDUS",
+    "ATBU",
+    "UCH",
+    "LUTH",
+    "UNTH",
+    "UBTH",
+    "LUTH",
+    "UNIBEN",
+    "UNILAG",
+    "UNIPORT",
+    "UNIJOS",
+    "UNILORIN",
+    "UNIZIK",
+    "UNICAL",
+    "UNIUYO",
+    "UNIMAID",
+    "UNIOSUN",
+    "UNIABUJA",
+    "ESUT",
+    "EKSU",
+    "LASU",
+    "OOU",
+    "AAU",
+    "AAUA",
+    "DELSU",
+    "NSUK",
+    "KSU",
+    "KASU",
+    "ADSU",
+    "IBBU",
+    "BSU",
+    "FUT",
+    "FUTA",
+    "FUTO",
+    "FUTMINNA",
+    "MAUTECH",
+    "MOUAU",
+    "NDA",
+    "NOUN",
+    "LAUTECH",
+    "TASUED",
+    "FUNAAB",
+    "FUNAI",
+    "FUOYE",
+    "ECWA",
+    "NKST",
+    "COCIN",
+    "RCCG",
+    "CAC",
+    "ECWA",
+    "FCT",
+    "ND",
+    "NCE",
+    "OND",
+    "HND",
+    "ICT",
+    "NTA",
+    "NNPC",
+    "PTI",
+    "AGZ",
+    "UMTH",
+    "JUTH",
+    "ABUTH",
+    "AKTH",
+    "OAUTHC",
+    "FMC",
+    "NAF",
+    "NIPSS"
+  ]
+}

@@ -1,0 +1,250 @@
+{
+  "_about": [
+    "Curated academic structure for the University of Jos. Replaces the JAMB IBASS 'faculty groups' (MEDICAL, ADMINISTRATION ...) for this institution.",
+    "Every IBASS programme is listed under 'from' by its existing id, so profiles that chose it keep working: the row is moved and renamed, never deleted. A second id in 'from' is a duplicate that gets merged into the first.",
+    "'placeholder': true marks a department that is really the programme itself (one degree taught across several teaching departments, e.g. MBBS, LL.B.); it is stored with derived=true.",
+    "Faculties with no undergraduate programme (Faculty of Basic Clinical Sciences; Faculty of Communication and Media Studies, whose page is not live and whose Mass Communication programme is still admitted under the Faculty of Arts in 2026/27) are left out so the picker never offers an empty faculty."
+  ],
+  "_sources": [
+    "https://www.unijos.edu.ng/unijos-academics (official list of faculties, fetched 2026-10-22)",
+    "https://www.unijos.edu.ng/registration-procedures-and-cut-marks-unijos-20262027-post-utmede-screening-exercise (programmes by faculty, 2026/27 Post-UTME, 10 July 2026)",
+    "https://www.unijos.edu.ng/faculty-health-sciences-technology (4 departments and degrees: B.M.L.S., B.N.Sc., D.PT, B.Rad.)",
+    "https://www.unijos.edu.ng/faculty-basic-medical-sciences (Human Anatomy, Medical Biochemistry, Human Physiology, Biochemistry)",
+    "https://www.unijos.edu.ng/faculty-clinical-sciences (MBBS; clinical departments)",
+    "https://www.unijos.edu.ng/faculty-dental-sciences (Bachelor of Dental Surgery)",
+    "https://www.unijos.edu.ng/faculty-agriculture, /faculty-architecture, /faculty-arts, /faculty-education, /faculty-engineering, /faculty-environmental-sciences, /faculty-law, /faculty-management-sciences, /faculty-natural-sciences, /faculty-phamaceutical-sciences, /faculty-social-sciences, /faculty-veterinary-medicine (department lists)",
+    "https://www.unijos.edu.ng/unijos-senate-approves-establishment-faculty-computing (Faculty of Computing departments, 4 March 2025)",
+    "https://punchng.com/nuc-approves-18-new-academic-programmes-for-unijos/ (2025/26 new programmes and degree titles)",
+    "https://en.wikipedia.org/wiki/University_of_Jos (programme list, cross-check)"
+  ],
+  "_teachingDepartments": {
+    "Faculty of Law": ["Commercial Law", "Public Law", "Private Law", "International Law and Jurisprudence"],
+    "Faculty of Clinical Sciences": ["Anaesthesiology", "Community Medicine", "Ear, Nose and Throat (ENT)/Head and Neck Surgery", "Family Medicine", "Medicine", "Obstetrics and Gynaecology", "Ophthalmology", "Orthopaedics and Trauma", "Paediatrics", "Psychiatry"],
+    "Faculty of Basic Clinical Sciences": ["Medical Microbiology", "Chemical Pathology", "Haematology and Blood Transfusion", "Histopathology", "Clinical Pharmacology and Therapeutics"],
+    "Faculty of Dental Sciences": ["Oral and Maxillofacial Surgery", "Restorative Dental Sciences", "Preventive Dental Sciences", "Oral Pathology", "Child Oral Health"],
+    "Faculty of Pharmaceutical Sciences": ["Pharmaceutical and Medicinal Chemistry", "Pharmaceutics", "Pharmaceutical Technology and Industrial Pharmacy", "Pharmaceutical Microbiology and Biotechnology", "Pharmacognosy and Traditional Medicine", "Pharmacology and Toxicology", "Clinical Pharmacy and Pharmacy Practice"],
+    "Faculty of Veterinary Medicine": ["Veterinary Anatomy", "Veterinary Medicine and Surgery", "Veterinary Microbiology and Pathology", "Veterinary Parasitology and Entomology", "Veterinary Physiology, Biochemistry and Pharmacology", "Veterinary Public Health and Preventive Medicine"],
+    "_note": "Teaching departments for degrees that students enter at faculty level. Not offered in the picker (no programme of their own); kept here for reference."
+  },
+  "institutionId": "inst_6f2a967481595077f0be",
+  "displayName": "University of Jos",
+  "abbreviation": "UNIJOS",
+  "faculties": [
+    {
+      "name": "Faculty of Agriculture",
+      "departments": [
+        { "name": "Agricultural Economics and Extension", "programmes": [{ "name": "Agricultural Economics and Extension", "from": ["prg_2a52bc43a01e07385e3a"] }] },
+        { "name": "Animal Production", "programmes": [{ "name": "Animal Production", "from": ["prg_de5fd45e5f283a3ff589"] }] },
+        { "name": "Crop Production", "programmes": [{ "name": "Crop Production", "from": ["prg_1bfc24b3c011b9802f4e"] }] },
+        { "name": "Agriculture", "placeholder": true, "programmes": [{ "name": "Agriculture", "from": ["prg_1acd26cc8ecce44c829f"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Architecture",
+      "departments": [
+        { "name": "Architecture", "programmes": [{ "name": "Architecture", "from": ["prg_f916c1bb569035c7354c"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Arts",
+      "departments": [
+        { "name": "Archaeology and Heritage Studies", "programmes": [{ "name": "Archaeology", "from": ["prg_c337377728175e2b5070"] }] },
+        { "name": "English", "programmes": [
+          { "name": "English Language", "from": ["prg_7e14610dcf72c3982be7"] },
+          { "name": "Literature in English", "from": ["prg_5744c8f69e3ca151b763"] }
+        ] },
+        { "name": "Foreign Languages", "programmes": [
+          { "name": "French", "from": ["prg_7cb29641f182714a66db"] },
+          { "name": "Arabic Studies", "from": ["prg_03f914580dfe8b483a08"] }
+        ] },
+        { "name": "History and International Studies", "programmes": [
+          { "name": "History and International Studies", "from": ["prg_8a07f0fc5e6f2c799438"] },
+          { "name": "International Studies and Diplomacy", "from": ["prg_1b8fe84deb8dcdc21de0"] }
+        ] },
+        { "name": "Linguistics and Nigerian Languages", "programmes": [{ "name": "Linguistics", "from": ["prg_6fd0f4bfaff05359ea06"] }] },
+        { "name": "Mass Communication", "programmes": [{ "name": "Mass Communication", "from": ["prg_bdb7e4cbb10c4bd3e892"] }] },
+        { "name": "Music", "programmes": [{ "name": "Music", "from": ["prg_bb1e61ca551d3bd00f02"] }] },
+        { "name": "Religion and Philosophy", "programmes": [
+          { "name": "Philosophy (B.A.)", "from": ["prg_86dcb5eccec0fbe66632"] },
+          { "name": "Religious Studies", "from": ["prg_14cc7c2657a6a719c629"] },
+          { "name": "Christian Religious Studies", "from": ["prg_55ec41c7be7fbb8477b9"] },
+          { "name": "Islamic Studies", "from": ["prg_b30b94b95fe297c54e9b"] }
+        ] },
+        { "name": "Theatre and Film Arts", "programmes": [{ "name": "Theatre and Film Arts", "from": ["prg_7b1eaa6df205448d62ba"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Basic Medical Sciences",
+      "departments": [
+        { "name": "Biochemistry", "programmes": [{ "name": "Biochemistry (B.Sc.)", "from": ["prg_454db3ad6a0b45bcffaf"] }] },
+        { "name": "Human Anatomy", "programmes": [{ "name": "Anatomy", "from": ["prg_c27605e2b16dd45d7c01"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Clinical Sciences",
+      "departments": [
+        { "name": "Medicine and Surgery", "placeholder": true, "programmes": [{ "name": "Medicine and Surgery (MBBS)", "from": ["prg_f218f011f001b770ce61"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Computing",
+      "departments": [
+        { "name": "Computer Science", "programmes": [
+          { "name": "Computer Science (B.Sc.)", "from": ["prg_7a1a1e94933e3d80d878"] },
+          { "name": "Data Science (B.Sc.)", "from": ["prg_7b064c2af28f622844dd"] }
+        ] },
+        { "name": "Computer Information Science", "programmes": [
+          { "name": "Computer Information Systems (B.Sc.)", "from": ["prg_1b9027e53e708d1c49aa"] },
+          { "name": "Information Technology (B.Sc.)", "from": ["prg_88036a869eeed1296e87"] }
+        ] },
+        { "name": "Cyber Security Science", "programmes": [{ "name": "Cyber Security Science (B.Sc.)", "from": ["prg_b29d364e1103ef0db8ad"] }] },
+        { "name": "Software Engineering", "programmes": [{ "name": "Software Engineering (B.Sc.)", "from": ["prg_c5ad19450e4796b22c4b"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Dental Sciences",
+      "departments": [
+        { "name": "Dental Surgery", "placeholder": true, "programmes": [{ "name": "Dental Surgery (BDS)", "from": ["prg_05fb0202ae62bb9e2df4"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Education",
+      "departments": [
+        { "name": "Arts Education", "programmes": [
+          { "name": "Education and English Language", "from": ["prg_23de29b88c5a798f805d"] },
+          { "name": "Education and French", "from": ["prg_6e3d2fd0844db22f3bae"] },
+          { "name": "Education and History", "from": ["prg_29398d311edbeeb0e858"] },
+          { "name": "Education and Religious Studies", "from": ["prg_f125e4b473925a79400c"] },
+          { "name": "Education and Music", "from": ["prg_a0244ef52627192f5564"] },
+          { "name": "Fine and Applied Arts Education", "from": ["prg_ead79a9b4007123d5140"] }
+        ] },
+        { "name": "Educational Foundations", "programmes": [
+          { "name": "Adult Education", "from": ["prg_1e34ada3e2bef0af465d"] },
+          { "name": "Early Childhood Education", "from": ["prg_3876fb0d9cadfe34a0d6"] },
+          { "name": "Educational Administration", "from": ["prg_0bf03b924527809294c7"] },
+          { "name": "Educational Administration and Planning", "from": ["prg_0125c6317c20d618d9d1"] },
+          { "name": "Guidance and Counselling", "from": ["prg_e04bbdee4b17c28dbff9"] },
+          { "name": "Library and Information Science", "from": ["prg_7dc97b42a5d204cd639a"] },
+          { "name": "Primary Education", "from": ["prg_3f254083ae9901cc0cc4"] }
+        ] },
+        { "name": "Physical and Health Education", "programmes": [{ "name": "Physical and Health Education", "from": ["prg_74e543c62dfe0c701297"] }] },
+        { "name": "Science and Technology Education", "programmes": [
+          { "name": "Agricultural Science Education", "from": ["prg_a4ab58c0cde0312ef664"] },
+          { "name": "Business Education", "from": ["prg_8ea35dbe83df4664401c"] },
+          { "name": "Education and Biology", "from": ["prg_c263593f2fb018a14e09"] },
+          { "name": "Education and Chemistry", "from": ["prg_3cea26db653caab565ab"] },
+          { "name": "Education and Geography/Physics", "from": ["prg_beefb955c4d4836b1420"] },
+          { "name": "Education and Mathematics", "from": ["prg_58e4d85a61c3cab69ca6"] },
+          { "name": "Education and Physics", "from": ["prg_82d51061b03b9d05c44c"] },
+          { "name": "Integrated Science Education", "from": ["prg_1d87d81d27181cd637ea", "prg_c4672ee02a850dd6bb76"] },
+          { "name": "Teacher Education Science", "from": ["prg_5004d93bb9b1cadc9dc4"] },
+          { "name": "Technical Education", "from": ["prg_fa26fabcfef7a4bac1a0"] }
+        ] },
+        { "name": "Social Science Education", "programmes": [
+          { "name": "Education and Economics", "from": ["prg_f9919c5b729cc71c44ef"] },
+          { "name": "Education and Social Studies", "from": ["prg_65553e7d3c5ed4cd43a1"] }
+        ] },
+        { "name": "Special Education and Rehabilitation Sciences", "programmes": [{ "name": "Special Education", "from": ["prg_2280708538fa9fde2e99"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Engineering",
+      "departments": [
+        { "name": "Civil Engineering", "programmes": [{ "name": "Civil Engineering (B.Eng.)", "from": ["prg_1acc08dbfa5b77ba4234"] }] },
+        { "name": "Electrical and Electronic Engineering", "programmes": [{ "name": "Electrical and Electronic Engineering (B.Eng.)", "from": ["prg_d00282a89e34a0355d83"] }] },
+        { "name": "Mechanical Engineering", "programmes": [{ "name": "Mechanical Engineering (B.Eng.)", "from": ["prg_5747633a0d0ecce94c8c"] }] },
+        { "name": "Mining Engineering", "programmes": [{ "name": "Mining Engineering (B.Eng.)", "from": ["prg_10a30adc7bb80f6af26e"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Environmental Sciences",
+      "departments": [
+        { "name": "Building", "programmes": [{ "name": "Building", "from": ["prg_0418d5a6c234c4153b62"] }] },
+        { "name": "Estate Management", "programmes": [{ "name": "Estate Management", "from": ["prg_0e9297b55e945f2cd12b"] }] },
+        { "name": "Fine and Applied Arts", "programmes": [{ "name": "Fine and Applied Arts", "from": ["prg_35f1e508ec752cbb6c46"] }] },
+        { "name": "Geography and Planning", "programmes": [{ "name": "Geography and Planning", "from": ["prg_3cfef281dacc66d9f1f3"] }] },
+        { "name": "Quantity Surveying", "programmes": [{ "name": "Quantity Surveying", "from": ["prg_ec86392ba4778e7e930c"] }] },
+        { "name": "Urban and Regional Planning", "programmes": [{ "name": "Urban and Regional Planning", "from": ["prg_d9ee231116eb6e6ec486"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Health Sciences and Technology",
+      "departments": [
+        { "name": "Medical Laboratory Science", "programmes": [{ "name": "Medical Laboratory Science (B.M.L.S.)", "from": ["prg_d3450524e220a9fdaab3"] }] },
+        { "name": "Nursing Science", "programmes": [{ "name": "Nursing Science (B.N.Sc.)", "from": ["prg_fc33697dbace8d5f0fa7"] }] },
+        { "name": "Physiotherapy", "programmes": [{ "name": "Physiotherapy (D.PT)", "from": ["prg_a246fcf358d24f65548f"] }] },
+        { "name": "Radiography", "programmes": [{ "name": "Radiography (B.Rad.)", "from": ["prg_089bd141d9846dbffff5"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Law",
+      "departments": [
+        { "name": "Law", "placeholder": true, "programmes": [{ "name": "Law (LL.B.)", "from": ["prg_a5d4d615c04f3abb2f51"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Management Sciences",
+      "departments": [
+        { "name": "Accounting", "programmes": [{ "name": "Accounting", "from": ["prg_5edcd0cfe9b312280325"] }] },
+        { "name": "Actuarial Science", "programmes": [{ "name": "Actuarial Science", "from": ["prg_c64d8933a59ce875caa8"] }] },
+        { "name": "Banking and Finance", "programmes": [{ "name": "Banking and Finance", "from": ["prg_cc0a0ff09c6a3372c360"] }] },
+        { "name": "Business Administration", "programmes": [
+          { "name": "Business Administration", "from": ["prg_f6b16457dc7e27541cfd"] },
+          { "name": "Entrepreneurship Studies (B.Sc.)", "from": ["prg_a12b82595e940b0c13ad"] }
+        ] },
+        { "name": "Insurance", "programmes": [{ "name": "Insurance", "from": ["prg_3545c6dea09b058e82ac"] }] },
+        { "name": "Marketing", "programmes": [{ "name": "Marketing", "from": ["prg_2ec2a8a4f678a64be919"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Natural Sciences",
+      "departments": [
+        { "name": "Chemistry", "programmes": [
+          { "name": "Chemistry", "from": ["prg_5bd56b0272f482b8b0df"] },
+          { "name": "Industrial Chemistry", "from": ["prg_307a8a2d7c6371e8c445"] },
+          { "name": "Pure and Applied Chemistry", "from": ["prg_b096e6a6b07f2d6757f3"] }
+        ] },
+        { "name": "Forensic Science", "placeholder": true, "programmes": [{ "name": "Forensic Science (B.Sc.)", "from": ["prg_9c5b2befe34a08408ba6"] }] },
+        { "name": "Geology", "programmes": [{ "name": "Geology and Mining", "from": ["prg_54d4cdcf3b0aa8eab590"] }] },
+        { "name": "Mathematics", "programmes": [
+          { "name": "Mathematics", "from": ["prg_85148decf83e5c1239c7"] },
+          { "name": "Statistics", "from": ["prg_91f16bfe5d85befc4764"] }
+        ] },
+        { "name": "Microbiology", "programmes": [{ "name": "Microbiology (B.Sc.)", "from": ["prg_36195ea10bd54a94dcaf"] }] },
+        { "name": "Physics", "programmes": [{ "name": "Physics", "from": ["prg_b00ad44faf66a7eeb66d"] }] },
+        { "name": "Plant Science and Biotechnology", "programmes": [{ "name": "Plant Science and Biotechnology", "from": ["prg_1dc2d9a00088bd7e1bc9", "prg_e59efd137d1f874a0608"] }] },
+        { "name": "Science Laboratory Technology", "programmes": [{ "name": "Science Laboratory Technology", "from": ["prg_f460e412632536ac35ae"] }] },
+        { "name": "Zoology", "programmes": [{ "name": "Zoology", "from": ["prg_9928dc32587948c29f28"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Pharmaceutical Sciences",
+      "departments": [
+        { "name": "Pharmacy", "placeholder": true, "programmes": [{ "name": "Pharmacy (Pharm.D.)", "from": ["prg_9e7864b5d9df19857b74"] }] },
+        { "name": "Pharmacology and Toxicology", "programmes": [{ "name": "Pharmacology (B.Sc.)", "from": ["prg_763eb996c8989a25a0c9"] }] }
+      ]
+    },
+    {
+      "name": "Faculty of Social Sciences",
+      "departments": [
+        { "name": "Criminology and Security Studies", "programmes": [{ "name": "Criminology and Security Studies (B.Sc.)", "from": ["prg_5fbeaf2b4f81f484de89", "prg_e0d682dd517efb9ef954"] }] },
+        { "name": "Economics", "programmes": [{ "name": "Economics (B.Sc.)", "from": ["prg_7319ffd9907fb9564d36"] }] },
+        { "name": "Political Science", "programmes": [
+          { "name": "Political Science (B.Sc.)", "from": ["prg_08f86accf403dd4c7ff2"] },
+          { "name": "Public Administration (B.Sc.)", "from": ["prg_d53b731bbaf7f1ae0e42"] }
+        ] },
+        { "name": "Psychology", "programmes": [{ "name": "Psychology (B.Sc.)", "from": ["prg_854c9666efc8a19a9a00"] }] },
+        { "name": "Sociology", "programmes": [
+          { "name": "Sociology (B.Sc.)", "from": ["prg_2553aac6444dd81f8f3f"] },
+          { "name": "Social Work and Social Administration (B.Sc.)", "from": ["prg_4caacbfad48c35801855"] }
+        ] }
+      ]
+    },
+    {
+      "name": "Faculty of Veterinary Medicine",
+      "departments": [
+        { "name": "Veterinary Medicine", "placeholder": true, "programmes": [{ "name": "Veterinary Medicine (DVM)", "from": ["prg_9481776ca267c4602b44"] }] }
+      ]
+    }
+  ]
+}

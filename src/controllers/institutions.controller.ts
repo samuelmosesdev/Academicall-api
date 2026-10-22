@@ -54,6 +54,11 @@ export async function listInstitutions(req: Request, res: Response) {
     prisma.institution.count({ where }),
   ]);
   let institutions = rows.slice(0, limit);
+  // An exact abbreviation ("UNIJOS") goes first, ahead of colleges "affiliated to UNIJOS".
+  if (q && !q.includes(" ") && offset === 0) {
+    const exact = await prisma.institution.findMany({ where: { ...where, AND: undefined, abbreviation: { equals: q, mode: "insensitive" } }, select: instSelect, take: 3 });
+    if (exact.length) institutions = [...exact, ...institutions.filter((i) => !exact.some((e) => e.id === i.id))].slice(0, limit);
+  }
   // Keep the University of Abuja at the top of an unfiltered list.
   if (!q && !state && !type && offset === 0) {
     const uofa = await prisma.institution.findUnique({ where: { id: DEFAULT_INSTITUTION_ID }, select: instSelect });

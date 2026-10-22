@@ -2,6 +2,7 @@ import "dotenv/config";
 import app from "./app";
 import { seedInstitutions } from "./lib/institutionSeed";
 import { seedCurricula } from "./lib/curriculumSeed";
+import { applyInstitutionOverrides } from "./lib/institutionOverrides";
 import { startPushDispatcher } from "./lib/push";
 
 const port = Number(process.env.PORT) || 4000;
@@ -20,6 +21,8 @@ startPushDispatcher();
 if (process.env.AUTO_SEED_INSTITUTIONS !== "false") {
   setTimeout(() => {
     seedInstitutions()
+      // catalogue corrections (curated institutions + global clean-up); versioned, a no-op once applied
+      .then(() => applyInstitutionOverrides().catch((err) => console.error("[institution-overrides] failed", err)))
       .then(() => seedCurricula())
       .catch((err) => console.error("[institutions] seed failed", err));
   }, 2_000);

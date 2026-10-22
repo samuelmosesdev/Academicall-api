@@ -1,17 +1,15 @@
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
-import crypto from "crypto";
 import { prisma } from "./prisma";
 import { DEFAULT_INSTITUTION_ID } from "./scope";
 
 const DATA_FILE = path.resolve(__dirname, "../../prisma/data/institutions.json.gz");
 
+import { hid } from "./catalogRules";
+
 /** Same deterministic ids as scripts/build-institutions-data.py. */
-export function hid(prefix: string, ...parts: string[]) {
-  const raw = parts.map((p) => String(p).trim().toUpperCase()).join("|");
-  return `${prefix}_${crypto.createHash("sha1").update(raw).digest("hex").slice(0, 20)}`;
-}
+export { hid };
 
 interface SeedProgram { id: string; name: string; status?: string; duration?: string | null; utme?: string | null; award?: string | null }
 interface SeedDepartment { id: string; name: string; derived: boolean; programs: SeedProgram[] }

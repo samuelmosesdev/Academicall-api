@@ -17,6 +17,25 @@ import { hid } from "./institutionSeed";
  * Idempotent and additive: never edits or deletes rows an admin changed.
  */
 const DATA_FILE = path.resolve(__dirname, "../../prisma/data/curricula.json.gz");
+const INSTITUTIONS_FILE = path.resolve(__dirname, "../../prisma/data/institutions.json.gz");
+
+/**
+ * The catalogue clean-up renames programmes ("AGRIC-ECONOMICS AND EXTENSION:" → "Agricultural Economics
+ * and Extension") and may change an abbreviation (JOS → UNIJOS). Curricula are keyed by JAMB's names, so
+ * keep matching on those too: the bundled file records them as "jamb" / "jambAbbreviation".
+ */
+function jambNames() {
+  const programs = new Map<string, string>();
+  const abbrs = new Map<string, string>();
+  try {
+    const data = JSON.parse(zlib.gunzipSync(fs.readFileSync(INSTITUTIONS_FILE)).toString("utf8"));
+    for (const i of data.institutions || []) {
+      if (i.jambAbbreviation) abbrs.set(i.id, i.jambAbbreviation);
+      for (const f of i.faculties || []) for (const d of f.departments || []) for (const p of d.programs || []) if (p.jamb) programs.set(p.id, p.jamb);
+    }
+  } catch { /* optional */ }
+  return { programs, abbrs };
+}
 const VERSION_KEY = "curriculaVersion";
 
 interface SeedCourse { level: string; semester: string | null; code: string; title: string; units: number | null; status: string | null; legacy: boolean }
@@ -84,8 +103,8 @@ export async function seedCurricula({ log = console.log, force = false } = {}) {
   await inBatches(entryRows, 2000, (chunk) => prisma.curriculumCourse.createMany({ data: chunk, skipDuplicates: true }));
 
   // 3. programme links
-  const programs: { id: string; name: string; abbr: string | null; type: string | null; award: string | null }[] = await prisma.$queryRawUnsafe(
-    `SELECT p.id, p.name, p.award, i.abbreviation AS abbr, i.type FROM programs p
+  const programs: { id: string; name: string; abbr: string | null; type: string | null; award: string | null; instId: string }[] = await prisma.$queryRawUnsafe(
+    `SELECT p.id, p.name, p.award, i.abbreviation AS abbr, i.type, i.id AS "instId" FROM programs p
      JOIN academic_departments d ON d.id = p."departmentId"
      JOIN faculties f ON f.id = d."facultyId"
      JOIN institutions i ON i.id = f."institutionId"`,
@@ -111,13 +130,18 @@ export async function seedCurricula({ log = console.log, force = false } = {}) {
   });
   const links: any[] = [];
   let jamb = 0, byName = 0, none = 0;
+  const original = jambNames();
+  const overrides = await prisma.setting.findUnique({ where: { key: "institutionOverrides" } });
+  for (const [k, v] of Object.entries(((overrides?.value as any)?.jambAbbreviations || {}) as Record<string, string>)) original.abbrs.set(k, v);
+  const firstHit = (keys: string[], m: Map<string, string[]>) => { for (const k of keys) { const ids = m.get(k); if (ids?.length) return ids; } return []; };
   for (const p of programs) {
     const tier = TIER_OF[p.type || ""] || (/^(ND|HND)/i.test(p.award || "") ? "nd" : /^NCE/i.test(p.award || "") ? "nce" : "degree");
-    const n = normName(p.name);
-    let ids = byInstName.get(`${(p.abbr || "").toUpperCase()}|${n}`) || [];
+    const names = [...new Set([p.name, original.programs.get(p.id)].filter(Boolean) as string[])];
+    const abbrs = [...new Set([p.abbr, original.abbrs.get(p.instId)].filter(Boolean).map((a) => String(a).toUpperCase()))];
+    let ids = firstHit(abbrs.flatMap((a) => names.map((n) => `${a}|${normName(n)}`)), byInstName);
     let how = "jamb";
-    if (!ids.length) { ids = byTierName.get(`${tier}|${n}`) || byTierName.get(`${tier}|${coreName(p.name)}`) || []; how = "name"; }
-    if (!ids.length) { ids = byCore.get(`${tier}|${coreName(p.name)}`) || []; how = "name"; }
+    if (!ids.length) { ids = firstHit(names.flatMap((n) => [`${tier}|${normName(n)}`, `${tier}|${coreName(n)}`]), byTierName); how = "name"; }
+    if (!ids.length) { ids = firstHit(names.map((n) => `${tier}|${coreName(n)}`), byCore); how = "name"; }
     if (ids.length) (how === "jamb" ? jamb++ : byName++); else none++;
     for (const id of new Set(ids)) links.push({ programId: p.id, curriculumId: id, matchedBy: how });
     for (const g of general) if (g.tier === tier) links.push({ programId: p.id, curriculumId: g.id, matchedBy: "general" });
