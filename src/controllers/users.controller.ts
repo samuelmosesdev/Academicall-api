@@ -432,6 +432,65 @@ export async function adminUpdateUser(req: Request, res: Response) {
       role = STAFF_ROLES.includes(target.role) || target.role === "courseRep" ? undefined : "user";
     }
     const courseRepChange = role === "courseRep" || (role === "user" && target.role === "courseRep") || body.courseRepMeta !== undefined;
+    const normalizeCourseRepScope =
+      (role === "courseRep" && target.role !== "courseRep") ||
+      (target.role === "courseRep" && body.courseRepMeta !== undefined && body.courseRepMeta !== null);
+    if (normalizeCourseRepScope) {
+      need("users.courseRep");
+      const suppliedSelection = [body.faculty, body.department, body.program].some((value) => value !== undefined);
+      let selection = await resolveAcademicSelection(target);
+      if (suppliedSelection) {
+        if (!target.institutionId || !body.faculty || !body.department || !body.program) {
+          throw Object.assign(new Error("Select a faculty, department, and programme within the student's institution."), { status: 400 });
+        }
+        const faculty = await prisma.faculty.findFirst({
+          where: { institutionId: target.institutionId, name: body.faculty, active: true },
+          select: { id: true, name: true },
+        });
+        if (!faculty) throw Object.assign(new Error("The selected faculty does not belong to the student's institution."), { status: 400 });
+        const department = await prisma.academicDepartment.findFirst({
+          where: { facultyId: faculty.id, name: body.department, active: true },
+          select: { id: true, name: true },
+        });
+        if (!department) throw Object.assign(new Error("The selected department does not belong to the selected faculty."), { status: 400 });
+        const program = await prisma.program.findFirst({
+          where: { departmentId: department.id, name: body.program, active: true },
+          select: { id: true, name: true },
+        });
+        if (!program) throw Object.assign(new Error("The selected programme does not belong to the selected department."), { status: 400 });
+        selection = {
+          institutionId: target.institutionId,
+          facultyId: faculty.id,
+          departmentId: department.id,
+          programId: program.id,
+          faculty: faculty.name,
+          department: department.name,
+          program: program.name,
+        };
+      }
+      const level = body.level ?? target.level;
+      if (!selection?.institutionId || !selection.facultyId || !selection.departmentId || !selection.programId || !selection.faculty || !selection.department || !selection.program || !level) {
+        throw Object.assign(new Error("The student must have an institution, faculty, department, programme, and level selected before becoming a Course Rep."), { status: 400 });
+      }
+      data.courseRepMeta = {
+        ...(body.courseRepMeta || {}),
+        institutionId: selection.institutionId,
+        facultyId: selection.facultyId,
+        departmentId: selection.departmentId,
+        programId: selection.programId,
+        faculty: selection.faculty,
+        department: selection.department,
+        program: selection.program,
+        level,
+      };
+      data.faculty = selection.faculty;
+      data.department = selection.department;
+      data.program = selection.program;
+      data.level = level;
+      data.facultyId = selection.facultyId;
+      data.departmentId = selection.departmentId;
+      data.programId = selection.programId;
+    }
     if (role !== undefined && role !== target.role) {
       if (STAFF_ROLES.includes(role) || STAFF_ROLES.includes(target.role)) need("staff.manage");
       else need("users.courseRep");
@@ -439,7 +498,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
       if (!STAFF_ROLES.includes(role)) data.permissions = Prisma.JsonNull;
       if (role !== "courseRep" && body.courseRepMeta === undefined) data.courseRepMeta = Prisma.JsonNull;
     }
-    if (body.courseRepMeta !== undefined) {
+    if (body.courseRepMeta !== undefined && !normalizeCourseRepScope) {
       need("users.courseRep");
       data.courseRepMeta = body.courseRepMeta === null ? Prisma.JsonNull : body.courseRepMeta;
     }
@@ -456,7 +515,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
     const touched = profileFields.filter((k) => body[k] !== undefined && body[k] !== (target as any)[k]);
     if (touched.length) {
       // Assigning a Course Rep carries their department and level with it.
-      const repOnly = courseRepChange && touched.every((k) => ["department", "faculty", "program", "level"].includes(k));
+      const repOnly = courseRepChange && touched.every((k) => ["department", "faculty", "program", "level", "facultyId", "departmentId", "programId"].includes(k));
       if (repOnly) need("users.courseRep"); else need("users.edit");
       for (const k of touched) (data as any)[k] = body[k];
     }
@@ -479,6 +538,7 @@ export async function adminUpdateUser(req: Request, res: Response) {
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
     if (err instanceof Forbidden) return res.status(403).json({ error: err.message });
+    if (err instanceof Error && "status" in err && err.status === 400) return res.status(400).json({ error: err.message });
     console.error("adminUpdateUser failed:", err);
     const reason =
       err instanceof Prisma.PrismaClientValidationError

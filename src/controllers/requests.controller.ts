@@ -52,6 +52,34 @@ const profileChangeSchema = z.object({
 
 function profileChangeView(item: any) { return { ...item, userId: item.userId, userName: item.userName, userEmail: item.userEmail }; }
 
+type CatalogShape = { faculties?: Array<{ name?: string; departments?: Array<{ name?: string; programs?: string[] }> }> } | null;
+
+async function catalogFor(institutionId: string | null | undefined): Promise<CatalogShape> {
+  if (!institutionId || institutionId === "uofa") {
+    const setting = await prisma.setting.findUnique({ where: { key: "academicCatalog" } });
+    return setting?.value as CatalogShape;
+  }
+  const faculties = await prisma.faculty.findMany({
+    where: { institutionId, active: true },
+    select: {
+      name: true,
+      departments: {
+        where: { active: true },
+        select: { name: true, programs: { where: { active: true }, select: { name: true } } },
+      },
+    },
+  });
+  return {
+    faculties: faculties.map((faculty) => ({
+      name: faculty.name,
+      departments: faculty.departments.map((department) => ({
+        name: department.name,
+        programs: department.programs.map((program) => program.name),
+      })),
+    })),
+  };
+}
+
 export async function listProfileChangeRequests(req: Request, res: Response) {
   const canReview = !!req.user && hasCap(req.user, "requests.review");
   const requests = await prisma.profileChangeRequest.findMany({ where: canReview ? undefined : { userId: req.user!.id }, orderBy: { createdAt: "desc" }, take: 200 });
@@ -110,7 +138,7 @@ export async function updateProfileChangeRequest(req: Request, res: Response) {
 
       const user = await prisma.user.findUnique({
         where: { id: current.userId },
-        select: { faculty: true, department: true, program: true, profileComplete: true },
+        select: { faculty: true, department: true, program: true, profileComplete: true, institutionId: true },
       });
       if (!user) return res.status(404).json({ error: "Request owner not found" });
 
@@ -119,10 +147,7 @@ export async function updateProfileChangeRequest(req: Request, res: Response) {
       };
 
       if (normalizedField === "program") {
-        const setting = await prisma.setting.findUnique({ where: { key: "academicCatalog" } });
-        const catalog = setting?.value as {
-          faculties?: Array<{ name?: string; departments?: Array<{ name?: string; programs?: string[] }> }>;
-        } | null;
+        const catalog = await catalogFor(user.institutionId);
 
         const faculties = catalog?.faculties || [];
         const matches = faculties.flatMap((faculty) =>
@@ -156,10 +181,7 @@ export async function updateProfileChangeRequest(req: Request, res: Response) {
       }
 
       if (normalizedField === "department") {
-        const setting = await prisma.setting.findUnique({ where: { key: "academicCatalog" } });
-        const catalog = setting?.value as {
-          faculties?: Array<{ name?: string; departments?: Array<{ name?: string; programs?: string[] }> }>;
-        } | null;
+        const catalog = await catalogFor(user.institutionId);
         const faculty = catalog?.faculties?.find((item) => item.name === user.faculty);
         const department = faculty?.departments?.find((item) => item.name === current.requestedValue);
         if (!department) {

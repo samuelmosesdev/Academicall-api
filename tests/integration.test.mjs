@@ -815,6 +815,32 @@ async function main() {
       assert.equal(tree.data.faculties[0].departments[0].programs[0].name, "ND Civil Engineering Technology", "public tree shows it");
     });
 
+    await test("course reps: staff assignment uses a validated institution-specific programme", async () => {
+      const student = await makeUser({ institutionId: inst.id, level: "ND I" });
+      const assigned = await call(admin.token, "PATCH", `/users/${student.id}`, {
+        role: "courseRep",
+        faculty: fac.name,
+        department: dep.name,
+        program: prog.name,
+        level: "ND I",
+      });
+      assert.equal(assigned.status, 200, JSON.stringify(assigned.data));
+      assert.equal(assigned.data.user.courseRepMeta.institutionId, inst.id);
+      assert.equal(assigned.data.user.courseRepMeta.facultyId, fac.id);
+      assert.equal(assigned.data.user.courseRepMeta.departmentId, dep.id);
+      assert.equal(assigned.data.user.courseRepMeta.programId, prog.id);
+      assert.equal(assigned.data.user.program, prog.name);
+      const invalid = await call(admin.token, "PATCH", `/users/${student.id}`, {
+        courseRepMeta: {},
+        faculty: fac.name,
+        department: "Wrong department",
+        program: prog.name,
+        level: "ND I",
+      });
+      assert.equal(invalid.status, 400, "a programme cannot be assigned outside its faculty and department");
+      await prisma.user.delete({ where: { id: student.id } });
+    });
+
     await test("academics: courses can be created, assigned to a department and reach the student's suggestions", async () => {
       const code = `CVE ${100 + (Date.now() % 800)}`;
       const r = await call(admin.token, "POST", "/admin/academics/courses", { code, title: "Workshop Practice", units: 2, level: "ND I", semester: "1st" });
