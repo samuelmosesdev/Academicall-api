@@ -1,7 +1,7 @@
 {
   "name": "academicall-api",
   "version": "1.0.0",
-  "description": "API-first backend for Academicall / UofA Readers \u2014 PostgreSQL + Express + Prisma",
+  "description": "API-first backend for Academicall / UofA Readers — PostgreSQL + Express + Prisma",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
@@ -29,6 +29,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1156.0",
+    "@aws-sdk/s3-request-presigner": "^3.1156.0",
     "@prisma/client": "^6.5.0",
     "@resvg/resvg-js": "2.6",
     "bcryptjs": "^2.4.3",

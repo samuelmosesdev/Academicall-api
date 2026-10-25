@@ -64,7 +64,15 @@ export function extensionOf(name?: string | null) {
 function allowedOrigin(url: URL) {
   const custom = (process.env.ATTACHMENT_ALLOWED_ORIGINS || "")
     .split(",").map((s) => s.trim()).filter(Boolean);
-  if (custom.some((origin) => url.href.startsWith(origin))) return true;
+  if (url.protocol === "https:" && custom.some((origin) => url.origin === origin)) return true;
+  const r2Origin = process.env.R2_PUBLIC_BASE_URL;
+  if (url.protocol === "https:" && r2Origin) {
+    try {
+      if (url.origin === new URL(r2Origin).origin) return true;
+    } catch {
+      return false;
+    }
+  }
   if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com") return false;
   const cloud = process.env.CLOUDINARY_CLOUD_NAME;
   if (!cloud) return true; // not configured: any Cloudinary cloud (documented; set it in production)
