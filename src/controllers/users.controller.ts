@@ -765,3 +765,55 @@ export async function listStaffAccess(_req: Request, res: Response) {
     })),
   });
 }
+
+
+/** Accurate dashboard totals and growth, independent of the directory page limit. */
+export async function userStats(_req: Request, res: Response) {
+  const activeUsers = { status: { not: "deleted" as const } };
+  const start = new Date();
+  start.setDate(1);
+  start.setMonth(start.getMonth() - 11);
+  const [total, free, paid, pro, annual, byRole, recentUsers] = await Promise.all([
+    prisma.user.count({ where: activeUsers }),
+    prisma.user.count({ where: { ...activeUsers, plan: "free" } }),
+    prisma.user.count({ where: { ...activeUsers, plan: { not: "free" } } }),
+    prisma.user.count({ where: { ...activeUsers, plan: "pro" } }),
+    prisma.user.count({ where: { ...activeUsers, plan: "annual" } }),
+    prisma.user.groupBy({ by: ["role"], where: activeUsers, _count: { _all: true } }),
+    prisma.user.findMany({
+      where: { ...activeUsers, createdAt: { gte: start } },
+      select: { createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  const now = new Date();
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1);
+    return {
+      key: `${date.getFullYear()}-${date.getMonth()}`,
+      label: date.toLocaleString("default", { month: "short" }),
+      count: 0,
+    };
+  });
+  const monthIndexes = new Map(months.map((month, index) => [month.key, index]));
+  for (const user of recentUsers) {
+    const key = `${user.createdAt.getFullYear()}-${user.createdAt.getMonth()}`;
+    const index = monthIndexes.get(key);
+    if (index !== undefined) months[index].count += 1;
+  }
+  let running = total - recentUsers.length;
+  const growth = months.map((month) => {
+    running += month.count;
+    return { label: month.label, users: running, new: month.count };
+  });
+
+  res.json({
+    total,
+    free,
+    paid,
+    pro,
+    annual,
+    byRole: Object.fromEntries(byRole.map((entry) => [entry.role, entry._count._all])),
+    growth,
+  });
+}

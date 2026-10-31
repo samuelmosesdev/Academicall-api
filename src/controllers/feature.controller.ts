@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { hasCap } from "../lib/access";
 import { broadcastProgramme, canSeeScoped } from "./programme.controller";
 import { institutionOf, isStaffRole, loadScopedUser, programmeScope } from "../lib/scope";
 
@@ -229,12 +230,32 @@ export async function getSetting(req: Request, res: Response) { const setting = 
 export async function updateSetting(req: Request, res: Response) { const setting = await prisma.setting.upsert({ where: { key: String(req.params.key) }, create: { key: String(req.params.key), value: req.body }, update: { value: req.body } }); res.json({ value: setting.value }); }
 
 export async function listChat(req: Request, res: Response) { const messages = await prisma.staffChatMessage.findMany({ where: { deleted: false }, orderBy: { createdAt: "desc" }, take: 200 }); res.json({ messages: messages.reverse() }); }
-export async function createChat(req: Request, res: Response) { if (!req.user) return res.status(401).json({ error: "Unauthenticated" }); const { authorUid, authorName, authorRole, authorPhoto, authorPlan, authorSubscription, type, text, mediaUrl, mediaWidth, mediaHeight, mediaDuration, reactions, replyTo, clientAt, meeting } = req.body; const message = await prisma.staffChatMessage.create({ data: { authorId: req.user.id, authorUid, authorName, authorRole, authorPhoto, authorPlan, authorSubscription, type, text, mediaUrl, mediaWidth, mediaHeight, mediaDuration, reactions, replyTo, clientAt, meeting } }); res.status(201).json({ message }); }
+export async function createChat(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  const author = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { id: true, name: true, nickname: true, email: true, role: true, photoUrl: true, plan: true },
+  });
+  if (!author) return res.status(401).json({ error: "Unauthenticated" });
+  const { type, text, mediaUrl, mediaWidth, mediaHeight, mediaDuration, reactions, replyTo, clientAt, meeting } = req.body || {};
+  const message = await prisma.staffChatMessage.create({
+    data: {
+      authorId: author.id,
+      authorUid: author.id,
+      authorName: author.name || author.nickname || author.email,
+      authorRole: author.role,
+      authorPhoto: author.photoUrl,
+      authorPlan: author.plan,
+      authorSubscription: null,
+      type, text, mediaUrl, mediaWidth, mediaHeight, mediaDuration, reactions, replyTo, clientAt, meeting,
+    },
+  });
+  res.status(201).json({ message });
+}
 const chatUpdateSchema = z.object({
   text: z.string().nullable().optional(), edited: z.boolean().optional(),
   editedAt: z.coerce.date().nullable().optional(), reactions: z.any().optional(),
   deleted: z.boolean().optional(), deletedAt: z.coerce.date().nullable().optional(),
-  deletedBy: z.string().nullable().optional(), deletedByName: z.string().nullable().optional(), deletedByRole: z.string().nullable().optional(),
 });
 export async function updateChat(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
@@ -245,7 +266,16 @@ export async function updateChat(req: Request, res: Response) {
   if (!isReactionOnly && existing.authorId !== req.user.id && !isAdmin) return res.status(403).json({ error: "Forbidden" });
   try {
     const body = chatUpdateSchema.parse(req.body);
-    const message = await prisma.staffChatMessage.update({ where: { id: existing.id }, data: body });
+    const data = body.deleted
+      ? {
+          ...body,
+          deletedAt: new Date(),
+          deletedBy: req.user.id,
+          deletedByName: req.user.email || req.user.id,
+          deletedByRole: req.user.role,
+        }
+      : body;
+    const message = await prisma.staffChatMessage.update({ where: { id: existing.id }, data });
     return res.json({ message });
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
@@ -385,7 +415,9 @@ export async function deleteFeedPost(req: Request, res: Response) {
   const existing = await prisma.feedPost.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Post not found" });
   if (!canSeeScoped(user, existing)) return res.status(403).json({ error: "This post belongs to another programme" });
-  const result = await prisma.feedPost.deleteMany({ where: { id: String(req.params.id), ...(isStaffRole(user.role) ? {} : { authorId: req.user.id }) } });
+  const canModerate = hasCap(user, "feeds.moderate");
+  if (existing.authorId !== req.user.id && !canModerate) return res.status(403).json({ error: "You can only delete your own posts" });
+  const result = await prisma.feedPost.deleteMany({ where: { id: String(req.params.id), ...(!canModerate ? { authorId: req.user.id } : {}) } });
   if (!result.count) return res.status(404).json({ error: "Post not found" });
   broadcastProgramme("feed", existing, "deleted");
   res.status(204).send();

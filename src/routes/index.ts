@@ -298,6 +298,7 @@ router.post("/auth/verification/verify", authenticate, L.verifyCheck, authCtrl.v
 router.get("/users/me", authenticate, authCtrl.me);
 router.patch("/users/me", authenticate, usersCtrl.updateMe);
 router.get("/users", authenticate, requireStaff, usersCtrl.listUsers);
+router.get("/users/stats", authenticate, requireStaff, usersCtrl.userStats);
 router.get("/users/course-rep-status", authenticate, usersCtrl.courseRepStatus);
 router.post("/users/agents", authenticate, requireCap("staff.manage"), usersCtrl.createAgent);
 router.get("/users/:id/materials", authenticate, requireCap("users.view"), sharesCtrl.userMaterials);
@@ -424,7 +425,7 @@ router.post("/class-events/:id/comments/:commentId/reactions", authenticate, cla
 router.get("/feed/:kind", authenticate, featureCtrl.listFeedPosts);
 router.post("/feed/:kind", authenticate, featureCtrl.createFeedPost);
 router.patch("/feed/:kind/:id", authenticate, featureCtrl.updateFeedPost);
-router.delete("/feed/:kind/:id", authenticate, requireCap("feeds.moderate"), featureCtrl.deleteFeedPost);
+router.delete("/feed/:kind/:id", authenticate, featureCtrl.deleteFeedPost);
 router.post("/feed/:kind/:id/comments", authenticate, feedSocial.addComment);
 router.delete("/feed/:kind/:id/comments/:commentId", authenticate, feedSocial.deleteComment);
 router.post("/feed/:kind/:id/reactions", authenticate, feedSocial.react);
