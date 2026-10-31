@@ -26,10 +26,10 @@ export const FEATURES = [
   { key: "courses", label: "Courses", group: "Students", hint: "My courses page and course suggestions", api: ["/courses", "/me/courses", "/catalog/courses"] },
   { key: "programme", label: "Programme page", group: "Students", hint: "Department page, live programme updates and department feed", api: ["/department", "/feed"] },
   { key: "groups", label: "Study groups", group: "Students", hint: "Study groups, invites and group chat", api: ["/groups"] },
-  { key: "materials", label: "Materials", group: "Students", hint: "Course material folders and the reading room", api: ["/material-saves", "/my-materials"] },
-  { key: "materialUploads", label: "Material uploads", group: "Students", hint: "Students upload their own files and organise them in folders", api: [] },
+  { key: "materials", label: "Library", group: "Students", hint: "Each student's Library: saved course materials, folders and the reading room", api: ["/material-saves", "/my-materials"] },
+  { key: "materialUploads", label: "Library uploads", group: "Students", hint: "Students upload their own files and organise them in folders", api: [] },
   // Enforced in materialShares.controller (not by path): when it's Pro, only sending is paid; receiving stays free.
-  { key: "materialSharing", label: "Material sharing", group: "Students", hint: "Send a file or folder from My materials to someone by their Unique ID", api: [] },
+  { key: "materialSharing", label: "Library sharing", group: "Students", hint: "Send a file or folder from My Library to someone by their Unique ID", api: [] },
   { key: "readingHub", label: "Reading Hub", group: "Students", hint: "Reading Hub documents and reader", api: ["/documents"] },
   { key: "reference", label: "Reference", group: "Students", hint: "Reference page", api: [] },
   { key: "timetable", label: "Timetable", group: "Students", hint: "Class timetable and scheduled classes", api: ["/timetable", "/class-events"] },

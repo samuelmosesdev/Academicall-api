@@ -48,7 +48,7 @@ export async function shareAccess(req: Request) {
 
 async function requireOn(req: Request) {
   const access = await shareAccess(req);
-  if (!access.enabled) throw new HttpError(403, "Material sharing isn't available right now.", "feature_off", { feature: SHARE_FEATURE });
+  if (!access.enabled) throw new HttpError(403, "Library sharing isn't available right now.", "feature_off", { feature: SHARE_FEATURE });
   return access;
 }
 
@@ -161,7 +161,7 @@ export const sendShare = handle(async (req, res) => {
   const sender = await prisma.user.findUnique({ where: { id: me.id }, select: USER_PUBLIC });
   await notifyMany([recipient.id], {
     type: "general",
-    title: `${displayName(sender)} shared a ${kind === "folder" ? "folder" : "material"} with you`,
+    title: `${displayName(sender)} shared a ${kind === "folder" ? "folder" : "file"} with you`,
     body: body.comment ? `“${body.comment}” · ${title}` : title,
     data: { link: INBOX_LINK, kind: "material_share", shareId: share.id },
     createdById: me.id,
@@ -266,7 +266,7 @@ export const acceptShare = handle(async (req, res) => {
   const done = await prisma.materialShare.update({ where: { id: share.id }, data: { status: "accepted", respondedAt: now, copiedFolderId } });
   await notifyMany([share.senderId], {
     type: "general",
-    title: `${displayName(recipient)} added your ${share.kind === "folder" ? "folder" : "material"}`,
+    title: `${displayName(recipient)} added your ${share.kind === "folder" ? "folder" : "file"}`,
     body: share.title,
     data: { link: SENT_LINK, kind: "material_share_reply", shareId: share.id },
     createdById: me.id,
