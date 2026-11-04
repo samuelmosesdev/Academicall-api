@@ -138,10 +138,23 @@ model User {
   /// UTME goals: exam date (YYYY-MM-DD) and questions per day
   utmeExamDate               String?
   utmeDailyTarget            Int?
+  /// Organisation: the office this person works in, their job title and their place in it
+  officeId                   String?
+  office                     Office?      @relation("OfficeMembers", fields: [officeId], references: [id], onDelete: SetNull)
+  positionTitle              String?
+  /// director | hod | supervisor | officer
+  orgRole                    String?
+  /// The staff member who supervises this person (set by an admin)
+  supervisorId               String?
+  supervisor                 User?        @relation("Supervision", fields: [supervisorId], references: [id], onDelete: SetNull)
   createdAt                  DateTime     @default(now())
   updatedAt                  DateTime     @updatedAt
 
   // Relations
+  reports               User[]                 @relation("Supervision")
+  headOf                Office[]               @relation("OfficeHead")
+  tasksAssigned         StaffTask[]            @relation("TaskAssignee")
+  tasksCreated          StaffTask[]            @relation("TaskCreator")
   documents             Document[]             @relation("UploadedBy")
   enrollments           Enrollment[]
   notifications         Notification[]         @relation("UserNotifications")
@@ -189,6 +202,8 @@ model User {
   @@index([department])
   @@index([institutionId])
   @@index([plan])
+  @@index([officeId])
+  @@index([supervisorId])
   @@map("users")
 }
 
@@ -1704,4 +1719,54 @@ model GeneralTestAttempt {
   @@index([testId, status])
   @@index([userId])
   @@map("general_test_attempts")
+}
+
+/// An office in the organisation: a directorate, a department or a unit. Offices nest (parentId).
+/// Its head (a Director or HOD) supervises everyone in it and in the offices beneath it.
+model Office {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  code        String      @unique
+  /// directorate | department | unit
+  kind        String      @default("department")
+  description String?
+  parentId    String?
+  parent      Office?     @relation("OfficeTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Office[]    @relation("OfficeTree")
+  headId      String?
+  head        User?       @relation("OfficeHead", fields: [headId], references: [id], onDelete: SetNull)
+  members     User[]      @relation("OfficeMembers")
+  tasks       StaffTask[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([parentId])
+  @@map("offices")
+}
+
+/// Work assigned to a staff member by an admin or by their supervisor.
+model StaffTask {
+  id           String    @id @default(uuid())
+  title        String
+  description  String?
+  /// low | normal | high | urgent
+  priority     String    @default("normal")
+  /// todo | in_progress | blocked | done
+  status       String    @default("todo")
+  officeId     String?
+  office       Office?   @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  assigneeId   String
+  assignee     User      @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  createdById  String?
+  createdBy    User?     @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  dueAt        DateTime?
+  completedAt  DateTime?
+  /// The assignee's progress note
+  note         String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([assigneeId, status])
+  @@index([officeId])
+  @@map("staff_tasks")
 }

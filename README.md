@@ -100,6 +100,26 @@ Health check: http://localhost:4000/api/v1/health
 | GET | `/api/v1/notifications` | Bearer | My notifications |
 | PATCH | `/api/v1/notifications/:id/read` | Bearer | Mark as read |
 
+Organization management (office/staff operations require admin access unless noted; task routes are staff-authenticated and enforce supervisor/assignee permissions):
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/org/meta` | Staff | Organization roles, positions and task options |
+| GET | `/api/v1/org/my` | Staff | My office, supervisor, team and task counts |
+| GET | `/api/v1/org/overview` | Admin | Organization summary |
+| GET | `/api/v1/org/offices` | Staff | List offices and their staff |
+| POST | `/api/v1/org/offices/seed-defaults` | Admin | Add default offices |
+| POST | `/api/v1/org/offices` | Admin | Create an office |
+| PATCH / DELETE | `/api/v1/org/offices/:id` | Admin | Update or remove an office |
+| GET | `/api/v1/org/staff` | Staff | List staff (admins see all; supervisors see their team) |
+| POST | `/api/v1/org/staff` | Admin | Create a staff account |
+| PATCH | `/api/v1/org/staff/:id` | Admin | Update staff position, access or supervision |
+| POST | `/api/v1/org/staff/:id/temp-password` | Admin | Issue a temporary password |
+| POST | `/api/v1/org/supervision` | Admin | Assign staff to a supervisor |
+| GET | `/api/v1/org/tasks` | Staff | List personal, team or admin tasks |
+| POST | `/api/v1/org/tasks` | Staff | Create a task for self or a supervised staff member |
+| PATCH / DELETE | `/api/v1/org/tasks/:id` | Staff | Update or remove an authorized task |
+
 All protected routes accept either:
 - `Authorization: Bearer <JWT>` (from `/auth/login` or `/auth/register`)
 - or a valid **Firebase ID token** (hybrid mode)

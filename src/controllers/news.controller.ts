@@ -58,10 +58,23 @@ function authorOut(a: any) {
   if (!a) return { name: "Academicall News", photoUrl: null };
   return { id: a.id, name: a.name || a.nickname || "Academicall News", photoUrl: a.photoUrl || a.avatarUrl || null, role: a.role, newsTeam: canWriteNews(a), chief: (a.staffTags || []).includes("newsChief") };
 }
-const words = (s: string) => (s.trim().match(/\S+/g) || []).length;
+function plainOf(body: string) {
+  return body
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)\{button\}/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,3}\s*/gm, "")
+    .replace(/^>\s*/gm, "")
+    .replace(/^[-*+]\s+|^\d+[.)]\s+/gm, "")
+    .replace(/^-{3,}$/gm, " ")
+    .replace(/[*_`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+const words = (s: string) => (plainOf(s).match(/\S+/g) || []).length;
 const readMinutes = (body: string) => Math.max(1, Math.round(words(body) / 220));
 function excerptOf(body: string) {
-  const plain = body.replace(/^#+\s*/gm, "").replace(/^>\s*/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+  const plain = plainOf(body);
   return plain.length > 180 ? `${plain.slice(0, 177).replace(/\s+\S*$/, "")}…` : plain;
 }
 /** First few paragraphs, about GUEST_PREVIEW_CHARS long, always cut on a paragraph boundary. */

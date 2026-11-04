@@ -28,6 +28,7 @@ import * as myMaterialsCtrl from "../controllers/myMaterials.controller";
 import * as newsCtrl from "../controllers/news.controller";
 import { feedSocial, classSocial, updateClassEvent } from "../controllers/programme.controller";
 import * as aspCtrl from "../controllers/aspirant.controller";
+import * as orgCtrl from "../controllers/org.controller";
 import * as utmeCtrl from "../controllers/utme.controller";
 import * as utmeAdminCtrl from "../controllers/utmeAdmin.controller";
 import * as featuresCtrl from "../controllers/features.controller";
@@ -535,5 +536,24 @@ router.get("/groups/:id/messages", authenticate, groupsCtrl.listMessages);
 router.post("/groups/:id/messages", authenticate, groupsCtrl.sendMessage);
 router.delete("/groups/:id/messages/:messageId", authenticate, groupsCtrl.deleteMessage);
 router.post("/groups/:id/messages/:messageId/save", authenticate, groupsCtrl.saveMessageMaterial);
+
+// ── Organisation: offices, positions, supervision and assigned work ──
+router.get("/org/meta", authenticate, requireStaff, orgCtrl.meta);
+router.get("/org/my", authenticate, requireStaff, orgCtrl.myOrg);
+router.get("/org/overview", authenticate, requireAdmin, orgCtrl.overview);
+router.get("/org/offices", authenticate, requireStaff, orgCtrl.listOffices);
+router.post("/org/offices/seed-defaults", authenticate, requireAdmin, orgCtrl.seedOffices);
+router.post("/org/offices", authenticate, requireAdmin, orgCtrl.createOffice);
+router.patch("/org/offices/:id", authenticate, requireAdmin, orgCtrl.updateOffice);
+router.delete("/org/offices/:id", authenticate, requireAdmin, orgCtrl.deleteOffice);
+router.get("/org/staff", authenticate, requireStaff, orgCtrl.listStaff);
+router.post("/org/staff", authenticate, requireAdmin, orgCtrl.createStaff);
+router.patch("/org/staff/:id", authenticate, requireAdmin, orgCtrl.updateStaff);
+router.post("/org/staff/:id/temp-password", authenticate, requireAdmin, orgCtrl.issueTempPassword);
+router.post("/org/supervision", authenticate, requireAdmin, orgCtrl.assignSupervision);
+router.get("/org/tasks", authenticate, requireStaff, orgCtrl.listTasks);
+router.post("/org/tasks", authenticate, requireStaff, orgCtrl.createTask);
+router.patch("/org/tasks/:id", authenticate, requireStaff, orgCtrl.updateTask);
+router.delete("/org/tasks/:id", authenticate, requireStaff, orgCtrl.deleteTask);
 
 export default router;
