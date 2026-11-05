@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { hasCap } from "../lib/access";
 import { broadcastProgramme, canSeeScoped } from "./programme.controller";
-import { institutionOf, isStaffRole, loadScopedUser, programmeScope } from "../lib/scope";
+import { institutionOf, isStaffRole, loadScopedUser, norm, programmeScope } from "../lib/scope";
 
 const questionSchema = z.object({
   courseId: z.string().optional().nullable(),
@@ -414,6 +414,18 @@ export async function deleteFeedPost(req: Request, res: Response) {
   if (!user) return res.status(401).json({ error: "Unauthenticated" });
   const existing = await prisma.feedPost.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Post not found" });
+  if (user.role === "courseRep") {
+    const sameDepartment = !!existing.department
+      && institutionOf(existing) === institutionOf(user)
+      && norm(existing.department) === norm(programmeScope(user));
+    const ownPost = existing.authorId === user.id;
+    if (!ownPost && !(existing.authorRole === "courseRep" && sameDepartment)) {
+      return res.status(403).json({ error: "Course Reps can delete their own posts and posts by other Course Reps in their department" });
+    }
+    await prisma.feedPost.delete({ where: { id: existing.id } });
+    broadcastProgramme("feed", existing, "deleted");
+    return res.status(204).send();
+  }
   if (!canSeeScoped(user, existing)) return res.status(403).json({ error: "This post belongs to another programme" });
   const canModerate = hasCap(user, "feeds.moderate");
   if (existing.authorId !== req.user.id && !canModerate) return res.status(403).json({ error: "You can only delete your own posts" });

@@ -18,6 +18,7 @@ import { Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 import { prisma } from "../lib/prisma";
+import { getNewsAccess } from "../lib/newsAccess";
 
 const SITE = (process.env.PUBLIC_SITE_URL || "https://academicall.site").replace(/\/$/, "");
 const SITE_NAME = "Academicall";
@@ -58,6 +59,7 @@ async function imageData(url?: string | null, opts: { square?: boolean } = {}): 
   if (/res\.cloudinary\.com\/.+\/image\/upload\//.test(src) && !/\/upload\/[a-z]_/.test(src)) {
     src = src.replace("/image/upload/", "/image/upload/f_jpg,q_80,w_900,h_900,c_limit/");
   }
+
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 4000);
@@ -72,6 +74,43 @@ async function imageData(url?: string | null, opts: { square?: boolean } = {}): 
     return `data:image/jpeg;base64,${jpg.toString("base64")}`;
   } catch {
     return null;
+  }
+}
+
+async function coverPhoto(url?: string | null): Promise<Buffer | null> {
+  if (!url) return null;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return null; }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "res.cloudinary.com") return null;
+
+  let src = parsed.toString();
+  if (parsed.pathname.includes("/image/upload/") && !/\/upload\/[a-z]_/.test(src)) {
+    src = src.replace("/image/upload/", "/image/upload/f_jpg,q_85,w_1600,c_limit/");
+  }
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const response = await fetch(src, { signal: ctrl.signal });
+    if (!response.ok) return null;
+    const length = Number(response.headers.get("content-length"));
+    if (length > 12 * 1024 * 1024) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > 12 * 1024 * 1024) return null;
+    const sharp = require("sharp");
+    for (const quality of [82, 70, 58, 46]) {
+      const jpeg: Buffer = await sharp(buffer, { failOn: "none" })
+        .rotate()
+        .resize(W, H, { fit: "cover", position: "attention" })
+        .jpeg({ quality, mozjpeg: true })
+        .toBuffer();
+      if (jpeg.length <= 280 * 1024 || quality === 46) return jpeg;
+    }
+    return null;
+  } catch (error) {
+    console.warn("[og] Could not render news cover image:", error);
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -197,6 +236,19 @@ export async function newsImage(req: Request, res: Response) {
   try {
     const post = await newsPost(slug);
     if (!post) return sendPng(res, await cached("default:news", () => render(defaultCard("news"))));
+    if ((await getNewsAccess()).ogImage === "cover" && post.coverUrl) {
+      let photo: Buffer | null = null;
+      try {
+        photo = await cached(`newscover:${slug}:${stamp(post.updatedAt)}`, async () => {
+          const image = await coverPhoto(post.coverUrl);
+          if (!image) throw new Error("No usable cover image");
+          return image;
+        });
+      } catch {
+        // Fall back to the branded card when a cover cannot be fetched or decoded.
+      }
+      if (photo) return sendPng(res, photo);
+    }
     const png = await cached(`news:${slug}:${stamp(post.updatedAt)}`, () => newsCard(post));
     sendPng(res, png);
   } catch (e) {
@@ -229,11 +281,12 @@ export async function metaFor(rawPath: string): Promise<OgMeta> {
   if (m && m[1] !== "desk") {
     const post = await newsPost(decodeURIComponent(m[1]));
     if (post) {
+      const style = (await getNewsAccess()).ogImage === "cover" && post.coverUrl ? "c" : "k";
       return {
         ...base,
         title: `${post.title} · Academicall News`,
         description: clip(post.excerpt || plain(post.body), 200),
-        image: `${SITE}/og/news/${encodeURIComponent(post.slug)}.jpg?v=${stamp(post.updatedAt)}`,
+        image: `${SITE}/og/news/${encodeURIComponent(post.slug)}.jpg?v=${stamp(post.updatedAt)}${style}`,
         imageAlt: post.title,
         type: "article",
         publishedTime: post.publishedAt?.toISOString(),

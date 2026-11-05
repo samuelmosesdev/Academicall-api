@@ -86,6 +86,10 @@ Health check: http://localhost:4000/api/v1/health
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/v1/health` | — | Health check |
+| GET | `/api/v1/news` | Public | List published stories; includes the guest reading mode |
+| GET | `/api/v1/news/:slug` | Public | Read a story under the configured guest access mode |
+| GET / PUT | `/api/v1/news/admin/access` | Admin | Read or update guest access and link-preview image settings |
+| DELETE | `/api/v1/feed/:kind/:id` | Signed in | Authors may delete their own posts; Course Reps may also delete Course Rep posts in their department; staff need `feeds.moderate` |
 | POST | `/api/v1/auth/register` | — | Register with email + password |
 | POST | `/api/v1/auth/login` | — | Login → returns JWT |
 | GET | `/api/v1/auth/me` | Bearer | Current user |

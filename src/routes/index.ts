@@ -187,6 +187,8 @@ router.post("/news/subscriptions", authenticate, newsCtrl.subscribe);
 router.patch("/news/subscriptions/prefs", authenticate, newsCtrl.subscriptionPrefs);
 router.delete("/news/subscriptions/:id", authenticate, newsCtrl.unsubscribe);
 // Chief News Agent: oversees every story and every News Agent
+router.get("/news/admin/access", authenticate, requireAdmin, newsCtrl.getAccessSettings);
+router.put("/news/admin/access", authenticate, requireAdmin, newsCtrl.saveAccessSettings);
 router.get("/news/chief/overview", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefOverview);
 router.get("/news/chief/posts", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefPosts);
 router.patch("/news/chief/posts/:id", authenticate, newsCtrl.requireNewsChief, newsCtrl.chiefModerate);

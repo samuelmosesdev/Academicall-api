@@ -15,6 +15,7 @@ import { randomBytes } from "crypto";
 import { prisma } from "../lib/prisma";
 import { canWriteNews, isNewsChief } from "../lib/access";
 import { audit } from "../lib/audit";
+import { getNewsAccess, saveNewsAccess, PREVIEW_CHARS_MAX, PREVIEW_CHARS_MIN } from "../lib/newsAccess";
 import { notifyMany } from "../lib/notify";
 import { publishToUsers } from "../lib/realtime";
 import { invalidateNewsIndex, searchNews, suggestNews } from "../lib/newsSearch";
@@ -77,17 +78,17 @@ function excerptOf(body: string) {
   const plain = plainOf(body);
   return plain.length > 180 ? `${plain.slice(0, 177).replace(/\s+\S*$/, "")}…` : plain;
 }
-/** First few paragraphs, about GUEST_PREVIEW_CHARS long, always cut on a paragraph boundary. */
-export function previewOf(body: string) {
+/** First few paragraphs, about `chars` long, always cut on a paragraph boundary. */
+export function previewOf(body: string, chars = GUEST_PREVIEW_CHARS) {
   const blocks = body.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
   if (!blocks.length) return "";
   const out: string[] = [];
   let len = 0;
   const limit = blocks.length === 1
-    ? Math.min(GUEST_PREVIEW_CHARS, Math.max(60, Math.floor(blocks[0].length * 0.65)))
-    : GUEST_PREVIEW_CHARS;
+    ? Math.min(chars, Math.max(60, Math.floor(blocks[0].length * 0.65)))
+    : chars;
   for (const b of blocks) {
-    if (out.length >= 1 && len + b.length > GUEST_PREVIEW_CHARS) break;
+    if (out.length >= 1 && len + b.length > chars) break;
     if (!out.length && b.length > limit) {
       const slice = b.slice(0, limit);
       out.push(`${slice.slice(0, slice.lastIndexOf(" ") > 0 ? slice.lastIndexOf(" ") : slice.length).trimEnd()}…`);
@@ -153,6 +154,7 @@ export const listNews = handle(async (req, res) => {
       posts: rows.map((p) => cardOut(p, r)), total: ids.length, corrected,
       nextBefore: null, nextOffset: offset + take < ids.length ? offset + take : null,
       categories: NEWS_CATEGORIES, viewer: { signedIn: !!req.user, canWrite: canWriteNews(req.user) },
+      access: { mode: (await getNewsAccess()).mode },
     });
   }
   const posts = await prisma.newsPost.findMany({
@@ -172,6 +174,7 @@ export const listNews = handle(async (req, res) => {
     nextBefore: posts.length > take ? page[page.length - 1].publishedAt : null,
     categories: NEWS_CATEGORIES,
     viewer: { signedIn: !!req.user, canWrite: canWriteNews(req.user), chief: isNewsChief(req.user) },
+    access: { mode: (await getNewsAccess()).mode },
   });
 });
 
@@ -182,15 +185,18 @@ export const getNews = handle(async (req, res) => {
   if (post.status === "published") prisma.newsPost.update({ where: { id: post.id }, data: { viewCount: { increment: 1 } } }).catch(() => {});
   const r = await reactionSummary([post.id], req.user?.id);
   const signedIn = !!req.user;
+  const access = await getNewsAccess();
+  const gated = !signedIn && access.mode === "preview";
   const related = await prisma.newsPost.findMany({
     where: { status: "published", id: { not: post.id }, category: post.category },
     orderBy: { publishedAt: "desc" }, take: 3, include: { author: { select: authorSelect } },
   });
   const rr = await reactionSummary(related.map((p) => p.id));
   res.json({
-    post: { ...cardOut(post, r), body: signedIn ? post.body : previewOf(post.body), gated: !signedIn },
+    post: { ...cardOut(post, r), body: gated ? previewOf(post.body, access.previewChars) : post.body, gated },
     related: related.map((p) => cardOut(p, rr)),
     viewer: { signedIn, canWrite: canWriteNews(req.user), canModerate: canWriteNews(req.user) },
+    access: { mode: access.mode },
   });
 });
 
@@ -661,4 +667,22 @@ export const chiefRemoveDuty = handle(async (req, res) => {
   await notifyMany([target.id], { type: "news", title: "You're no longer on the news team", body: "Your published stories stay up. Thanks for writing.", data: { link: "/news" }, createdById: req.user!.id });
   await audit(req.user, "news.agent.remove", { id: target.id, label: target.name || target.email });
   res.json({ ok: true });
+});
+
+export const getAccessSettings = handle(async (_req, res) => {
+  res.json({
+    settings: await getNewsAccess(true),
+    limits: { previewCharsMin: PREVIEW_CHARS_MIN, previewCharsMax: PREVIEW_CHARS_MAX },
+  });
+});
+
+export const saveAccessSettings = handle(async (req, res) => {
+  const body = z.object({
+    mode: z.enum(["open", "soft", "preview"]).optional(),
+    previewChars: z.number().int().min(PREVIEW_CHARS_MIN).max(PREVIEW_CHARS_MAX).optional(),
+    ogImage: z.enum(["cover", "card"]).optional(),
+  }).strict().parse(req.body);
+  const settings = await saveNewsAccess(body);
+  await audit(req.user, "news.access_settings", null, body);
+  res.json({ settings });
 });
