@@ -248,7 +248,8 @@ export async function createDocument(req: Request, res: Response) {
     const staff = isStaff(req.user.role);
     const isCourseRep = req.user.role === "courseRep";
     const isStudent = req.user.role === "user";
-    if ((isCourseRep || isStudent) && !body.fileUrl) {
+    const isPersonalUpload = isStudent || body.source === "personal";
+    if ((isCourseRep || isPersonalUpload) && !body.fileUrl) {
       return res.status(400).json({ error: "A file URL is required to upload a material" });
     }
     const uploader = await prisma.user.findUnique({
@@ -256,7 +257,7 @@ export async function createDocument(req: Request, res: Response) {
       select: { plan: true, courseRepMeta: true, autoPublish: true, institutionId: true },
     });
     if (!uploader) return res.status(401).json({ error: "User not found" });
-    if (isStudent) {
+    if (isPersonalUpload) {
       const access = await personalUploadAccess(req.user.id, req.user.role);
       if (!access.allowed) {
         return res.status(402).json({ error: "Uploading your own materials is a premium feature.", code: "premium_required", feature: "materialUploads" });
@@ -321,14 +322,14 @@ export async function createDocument(req: Request, res: Response) {
       }
     }
     const { program: requestedProgram, folderId: _folderId, ...documentBody } = body;
-    const status = isStudent || isCourseRep
+    const status = isPersonalUpload || isCourseRep
       ? "approved"
       : body.status || (staff || uploader.autoPublish ? "approved" : "pending");
     const document = await prisma.document.create({
       data: {
         ...documentBody,
         institutionId,
-        ...(isStudent
+        ...(isPersonalUpload
           ? { courseId: null, faculty: null, department: null, level: null, source: "personal", folderId: body.folderId || null }
           : isCourseRep
             ? { department: assignedProgram, level, source: "courseRep" }
@@ -337,16 +338,16 @@ export async function createDocument(req: Request, res: Response) {
               : {}),
         tags: body.tags === null ? Prisma.JsonNull : body.tags,
         uploadedById: req.user.id,
-        source: isStudent
+        source: isPersonalUpload
           ? "personal"
           : isCourseRep
             ? "courseRep"
             : body.source || "staff",
         status,
-        ...(status === "approved" && !isStudent && !isCourseRep
+        ...(status === "approved" && !isPersonalUpload && !isCourseRep
           ? { approvedById: req.user.id, approvedAt: new Date() }
           : {}),
-        ...(isStudent || isCourseRep ? { approvedAt: new Date() } : {}),
+        ...(isPersonalUpload || isCourseRep ? { approvedAt: new Date() } : {}),
       },
     });
     broadcastMaterial(document, "created");
