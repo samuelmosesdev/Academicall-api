@@ -89,6 +89,7 @@ export async function overview(req: Request, res: Response) {
       personalUploadAccess(userId, req.user.role),
     ]);
     const usedBytes = uploads.reduce((n, d) => n + (d.fileSize || 0), 0);
+    res.setHeader("Cache-Control", "no-store, private");
     res.json({ folders, uploads, saves, upload: { ...access, used: uploads.length, usedBytes, ...MY_MATERIALS_LIMITS }, colors: COLORS });
   } catch (err) { fail(res, err); }
 }
