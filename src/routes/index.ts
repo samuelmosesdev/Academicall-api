@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { cacheForGuests } from "../lib/httpCache";
 import { authenticate, requireAdmin, requireStaff, requireAdminOrAlpha, requireCap } from "../middleware/auth";
 import * as filesCtrl from "../controllers/files.controller";
 import * as secCtrl from "../controllers/secretariat.controller";
@@ -51,7 +52,7 @@ const router = Router();
 const userKey = (r: any) => String(r.user?.id || r.ip);
 
 // Feature switches: a feature an admin discontinued answers 403 feature_off (staff keep access)
-router.get("/features", featuresCtrl.publicFeatures);
+router.get("/features", cacheForGuests(15, 120), featuresCtrl.publicFeatures);
 // Maintenance mode: everyone but staff gets 503 while it's on
 router.use(maintenanceGate);
 router.use(featureGate);
@@ -179,7 +180,7 @@ router.patch("/vault/files/:id", authenticate, vaultCtrl.requireVault, vaultCtrl
 router.delete("/vault/files/:id", authenticate, vaultCtrl.requireVault, vaultCtrl.deleteFile);
 
 // Academicall News (public reading; sign in to read in full, react and comment)
-router.get("/news", newsCtrl.optionalAuth, newsCtrl.listNews);
+router.get("/news", cacheForGuests(30, 300), newsCtrl.optionalAuth, newsCtrl.listNews);
 router.get("/news/suggest", newsCtrl.suggest);
 router.get("/news/for-you", authenticate, newsCtrl.forYou);
 router.get("/news/subscriptions", authenticate, newsCtrl.listSubscriptions);
@@ -204,7 +205,7 @@ router.get("/news/:id/comments", newsCtrl.optionalAuth, newsCtrl.listComments);
 router.post("/news/:id/comments", authenticate, newsCtrl.addComment);
 router.delete("/news/comments/:commentId", authenticate, newsCtrl.deleteComment);
 router.post("/news/:id/reactions", authenticate, newsCtrl.react);
-router.get("/news/:slug", newsCtrl.optionalAuth, newsCtrl.getNews);
+router.get("/news/:slug", cacheForGuests(60, 600), newsCtrl.optionalAuth, newsCtrl.getNews);
 
 // UTME CBT practice history (the bank itself is static in the web app)
 // UTME control room: every editor endpoint is guarded by its own capability.
@@ -468,9 +469,9 @@ router.use("/department", departmentRoutes);
 router.get("/realtime/stream", authenticate, realtimeCtrl.stream);
 
 // Institutions → faculties → departments → programmes (public reads: needed before profile setup)
-router.get("/institutions", institutionsCtrl.listInstitutions);
-router.get("/institutions/:id", institutionsCtrl.getInstitution);
-router.get("/institutions/:id/tree", institutionsCtrl.getInstitutionTree);
+router.get("/institutions", cacheForGuests(300, 3600), institutionsCtrl.listInstitutions);
+router.get("/institutions/:id", cacheForGuests(300, 3600), institutionsCtrl.getInstitution);
+router.get("/institutions/:id/tree", cacheForGuests(300, 3600), institutionsCtrl.getInstitutionTree);
 router.post("/institutions", authenticate, requireAdmin, institutionsCtrl.createInstitution);
 router.post("/institutions/:id/faculties", authenticate, requireAdmin, institutionsCtrl.createFaculty);
 router.post("/faculties/:id/departments", authenticate, requireAdmin, institutionsCtrl.createDepartment);

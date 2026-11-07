@@ -137,6 +137,9 @@ export async function presignUpload(req: Request, res: Response) {
   const disposition = kind === "document"
     ? `attachment; filename*=UTF-8''${encodeURIComponent(name)}`
     : "inline";
+  const cacheControl = process.env.R2_IMMUTABLE_CACHE === "1"
+    ? "public, max-age=31536000, immutable"
+    : null;
 
   try {
     const command = new PutObjectCommand({
@@ -144,11 +147,17 @@ export async function presignUpload(req: Request, res: Response) {
       Key: key,
       ContentType: fileType.contentType,
       ContentDisposition: disposition,
+      ...(cacheControl ? { CacheControl: cacheControl } : {}),
       ContentLength: size,
     });
     const uploadUrl = await getSignedUrl(getClient(config), command, {
       expiresIn: 120,
-      signableHeaders: new Set(["content-length", "content-type", "content-disposition"]),
+      signableHeaders: new Set([
+        "content-length",
+        "content-type",
+        "content-disposition",
+        ...(cacheControl ? ["cache-control"] : []),
+      ]),
     });
     return res.json({
       uploadUrl,
@@ -159,6 +168,7 @@ export async function presignUpload(req: Request, res: Response) {
       headers: {
         "Content-Type": fileType.contentType,
         "Content-Disposition": disposition,
+        ...(cacheControl ? { "Cache-Control": cacheControl } : {}),
       },
     });
   } catch (error) {

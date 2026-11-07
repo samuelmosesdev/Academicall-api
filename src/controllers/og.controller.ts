@@ -44,6 +44,22 @@ function fonts() {
 let logoUri: string | null = null;
 const logo = () => (logoUri ??= `data:image/png;base64,${asset("logo.png").toString("base64")}`);
 
+function isTrustedImageHost(url: URL) {
+  const host = url.hostname.toLowerCase();
+  if (
+    host === "res.cloudinary.com" ||
+    host === "firebasestorage.googleapis.com" ||
+    host === "storage.googleapis.com" ||
+    host === "lh3.googleusercontent.com" ||
+    host.endsWith(".googleusercontent.com")
+  ) return true;
+  try {
+    return url.protocol === "https:" && host === new URL(process.env.R2_PUBLIC_BASE_URL || "").hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 const clip = (s: string, n: number) => {
   const t = (s || "").replace(/\s+/g, " ").trim();
@@ -53,8 +69,11 @@ const plain = (md: string) => md.replace(/^#+\s*/gm, "").replace(/^>\s*/gm, "").
 const stamp = (d?: Date | null) => (d ? d.getTime().toString(36) : "0");
 
 /** Fetch a cover image as a data URI (Cloudinary covers are resized/converted on the fly). */
-async function imageData(url?: string | null, opts: { square?: boolean } = {}): Promise<string | null> {
-  if (!url || !/^https?:\/\//.test(url)) return null;
+async function imageData(url?: string | null, opts: { square?: boolean; trustedOnly?: boolean } = {}): Promise<string | null> {
+  if (!url || !/^https:\/\//.test(url)) return null;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return null; }
+  if (opts.trustedOnly && !isTrustedImageHost(parsed)) return null;
   let src = url;
   if (/res\.cloudinary\.com\/.+\/image\/upload\//.test(src) && !/\/upload\/[a-z]_/.test(src)) {
     src = src.replace("/image/upload/", "/image/upload/f_jpg,q_80,w_900,h_900,c_limit/");
@@ -63,9 +82,9 @@ async function imageData(url?: string | null, opts: { square?: boolean } = {}): 
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 4000);
-    const r = await fetch(src, { signal: ctrl.signal });
+    const r = await fetch(src, { signal: ctrl.signal, redirect: opts.trustedOnly ? "manual" : "follow" });
     clearTimeout(t);
-    if (!r.ok) return null;
+    if (!r.ok || (opts.trustedOnly && !isTrustedImageHost(new URL(r.url)))) return null;
     const buf = Buffer.from(await r.arrayBuffer());
     if (buf.length > 8 * 1024 * 1024) return null;
     // Normalise any format (WebP, AVIF, PNG, huge JPEGs) to a small JPEG cropped to the card's photo slot.
@@ -81,7 +100,7 @@ async function coverPhoto(url?: string | null): Promise<Buffer | null> {
   if (!url) return null;
   let parsed: URL;
   try { parsed = new URL(url); } catch { return null; }
-  if (parsed.protocol !== "https:" || parsed.hostname !== "res.cloudinary.com") return null;
+  if (parsed.protocol !== "https:" || !isTrustedImageHost(parsed)) return null;
 
   let src = parsed.toString();
   if (parsed.pathname.includes("/image/upload/") && !/\/upload\/[a-z]_/.test(src)) {
@@ -90,7 +109,7 @@ async function coverPhoto(url?: string | null): Promise<Buffer | null> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 7000);
   try {
-    const response = await fetch(src, { signal: ctrl.signal });
+    const response = await fetch(src, { signal: ctrl.signal, redirect: "manual" });
     if (!response.ok) return null;
     const length = Number(response.headers.get("content-length"));
     if (length > 12 * 1024 * 1024) return null;
@@ -171,7 +190,7 @@ function sendPng(res: Response, png: Buffer) {
 async function newsPost(slug: string) {
   return prisma.newsPost.findFirst({
     where: { slug, status: "published" },
-    select: { slug: true, title: true, excerpt: true, body: true, coverUrl: true, category: true, publishedAt: true, updatedAt: true, author: { select: { name: true, nickname: true } } },
+    select: { slug: true, title: true, excerpt: true, body: true, coverUrl: true, category: true, publishedAt: true, updatedAt: true, author: { select: { name: true, nickname: true, photoUrl: true, avatarUrl: true } } },
   });
 }
 async function studyGroup(code: string) {
@@ -196,22 +215,43 @@ export async function defaultImage(req: Request, res: Response) {
   try { sendPng(res, await cached(`default:${kind}`, () => render(defaultCard(kind)))); } catch (e) { console.error("[og]", e); res.status(500).end(); }
 }
 
-type NewsCardInput = { title: string; excerpt?: string | null; body: string; coverUrl?: string | null; category: string; publishedAt?: Date | null; author?: { name?: string | null; nickname?: string | null } | null };
-/** Render the 1200×630 card for one story (exported for tests and previews). */
+type NewsCardInput = { title: string; excerpt?: string | null; body: string; coverUrl?: string | null; category: string; publishedAt?: Date | null; author?: { name?: string | null; nickname?: string | null; photoUrl?: string | null; avatarUrl?: string | null } | null };
+/** Render the 1200×630 story card used for link previews. */
 export async function newsCard(post: NewsCardInput) {
-  const cover = await imageData(post.coverUrl);
-  const title = clip(post.title, cover ? 92 : 120);
-  const size = title.length > 70 ? (cover ? 46 : 56) : title.length > 42 ? (cover ? 54 : 66) : cover ? 62 : 76;
-  const by = post.author?.name || post.author?.nickname;
+  const [cover, avatar] = await Promise.all([
+    coverPhoto(post.coverUrl),
+    imageData(post.author?.photoUrl || post.author?.avatarUrl, { square: true, trustedOnly: true }),
+  ]);
+  const backdrop = cover ? `data:image/jpeg;base64,${cover.toString("base64")}` : null;
+  const title = clip(post.title, 108);
+  const size = title.length > 78 ? 56 : title.length > 52 ? 64 : title.length > 30 ? 74 : 84;
+  const standfirst = clip(post.excerpt || plain(post.body), 120);
+  const by = post.author?.nickname || post.author?.name || "";
+  const words = (plain(post.body).match(/\S+/g) || []).length;
   const date = post.publishedAt ? post.publishedAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
-  return render(frame([
-    h("div", { alignItems: "center", gap: 14 },
-      chip(post.category.toUpperCase()),
-      h("div", { fontSize: 22, color: "rgba(255,255,255,0.6)" }, [by, date].filter(Boolean).join("  ·  ")),
+  const meta = [date, `${Math.max(1, Math.round(words / 220))} min read`].filter(Boolean).join("   ·   ");
+  const avatarEl = avatar
+    ? img(avatar, { width: 46, height: 46, borderRadius: 46, objectFit: "cover" })
+    : h("div", { width: 46, height: 46, borderRadius: 46, background: "#454ADE", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 700 }, (by || "A").slice(0, 1).toUpperCase());
+  return render(
+    h("div", { width: W, height: H, background: "#0F0326", fontFamily: "Geist", color: "#fff", position: "relative", overflow: "hidden" },
+      backdrop
+        ? img(backdrop, { position: "absolute", left: 0, top: 0, width: W, height: H, objectFit: "cover" })
+        : h("div", { position: "absolute", left: 0, top: 0, width: W, height: H, background: "radial-gradient(circle at 85% 0%, rgba(69,74,222,0.75) 0%, rgba(69,74,222,0) 55%)" }),
+      h("div", { position: "absolute", left: 0, top: 0, width: W, height: H, backgroundImage: "linear-gradient(180deg, rgba(15,3,38,0.10) 0%, rgba(15,3,38,0.30) 34%, rgba(15,3,38,0.80) 66%, rgba(15,3,38,0.97) 100%)" }),
+      img(logo(), { position: "absolute", left: 64, top: 48, height: 34, width: 177 }),
+      h("div", { position: "absolute", left: 64, right: 64, bottom: 50, flexDirection: "column" },
+        chip((post.category || "News").toUpperCase()),
+        h("div", { marginTop: 22, fontFamily: "Fraunces", fontSize: size, lineHeight: 1.06, letterSpacing: -1.5, maxWidth: 1040 }, title),
+        standfirst ? h("div", { marginTop: 18, fontSize: 26, lineHeight: 1.35, color: "rgba(255,255,255,0.84)", maxWidth: 1000 }, standfirst) : null,
+        h("div", { marginTop: 26, alignItems: "center", gap: 16 },
+          avatarEl,
+          by ? h("div", { fontSize: 25, fontWeight: 700 }, by) : null,
+          h("div", { fontSize: 23, color: "rgba(255,255,255,0.7)" }, meta),
+        ),
+      ),
     ),
-    h("div", { marginTop: 30, fontFamily: "Fraunces", fontSize: size, lineHeight: 1.08, letterSpacing: -1, maxWidth: cover ? 600 : 1000 }, title),
-    h("div", { marginTop: 22, fontSize: 25, lineHeight: 1.4, color: "#BFFBEA", maxWidth: cover ? 590 : 960 }, clip(post.excerpt || plain(post.body), cover ? 120 : 170)),
-  ], { cover, footer: "academicall.site/news" }));
+  );
 }
 
 type StudyCardInput = { name: string; memberCount: number; courseCode?: string | null; level?: string | null; official?: boolean; iconUrl?: string | null };

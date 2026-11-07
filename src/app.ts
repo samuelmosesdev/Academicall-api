@@ -1,8 +1,10 @@
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import helmet from "helmet";
 import morgan from "morgan";
 import routes from "./routes";
+import { defaultCachePolicy } from "./lib/httpCache";
 
 const app = express();
 const configuredOrigins = process.env.CORS_ORIGIN?.split(",")
@@ -44,11 +46,24 @@ app.use((req, res, next) => {
   return next();
 });
 app.use(
+  compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      const contentType = String(res.getHeader("Content-Type") || "");
+      if (contentType.includes("text/event-stream") || String(req.headers.accept || "").includes("text/event-stream")) {
+        return false;
+      }
+      return compression.filter(req, res);
+    },
+  }),
+);
+app.use(
   cors({
     origin: (origin, callback) => {
       callback(null, isAllowedOrigin(origin));
     },
     credentials: true,
+    maxAge: 7200,
   })
 );
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
@@ -66,7 +81,7 @@ app.use(
   })
 );
 
-app.use("/api/v1", routes);
+app.use("/api/v1", defaultCachePolicy, routes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found" });
