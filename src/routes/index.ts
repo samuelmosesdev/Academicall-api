@@ -23,7 +23,8 @@ import * as institutionsCtrl from "../controllers/institutions.controller";
 import * as groupsCtrl from "../controllers/groups.controller";
 import * as realtimeCtrl from "../controllers/realtime.controller";
 import express from "express";
-import { authLimits as L, rateLimit } from "../middleware/rateLimit";
+import { authLimiter, authLimits as L, codeLimiter, rateLimit } from "../middleware/rateLimit";
+import { prisma } from "../lib/prisma";
 import * as vaultCtrl from "../controllers/vault.controller";
 import * as myMaterialsCtrl from "../controllers/myMaterials.controller";
 import * as newsCtrl from "../controllers/news.controller";
@@ -47,6 +48,7 @@ import * as dataCtrl from "../controllers/dataAdmin.controller";
 import * as boardCtrl from "../controllers/board.controller";
 import * as sharesCtrl from "../controllers/materialShares.controller";
 import * as storageCtrl from "../controllers/storage.controller";
+import * as supportCtrl from "../controllers/support.controller";
 
 const router = Router();
 const userKey = (r: any) => String(r.user?.id || r.ip);
@@ -280,23 +282,46 @@ router.get("/og/image/news/:slug", ogCtrl.newsImage);
 router.get("/og/image/study/:code", ogCtrl.studyImage);
 
 // Health
-router.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "academicall-api", time: new Date().toISOString() });
+router.get("/health", async (_req, res) => {
+  const started = Date.now();
+  let db: "ok" | "error" | "skipped" = "skipped";
+  let dbMs = 0;
+
+  try {
+    const pingStarted = Date.now();
+    await prisma.$queryRaw`SELECT 1`;
+    dbMs = Date.now() - pingStarted;
+    db = "ok";
+  } catch {
+    db = "error";
+  }
+
+  const payload = {
+    status: db === "error" ? "degraded" : "ok",
+    service: "academicall-api",
+    time: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    db,
+    dbMs,
+    totalMs: Date.now() - started,
+  };
+
+  res.status(db === "error" ? 503 : 200).json(payload);
 });
 
 // Paystack webhook (public — verified via signature, not JWT)
 router.post("/payments/webhook/paystack", paymentsCtrl.paystackWebhook);
 
 // Auth (public)
-router.post("/auth/register", L.register, authCtrl.register);
-router.post("/auth/login", L.loginPerIp, L.loginPerAccount, authCtrl.login);
+router.post("/auth/register", authLimiter, L.register, authCtrl.register);
+router.post("/auth/login", authLimiter, L.loginPerIp, L.loginPerAccount, authCtrl.login);
 router.post("/auth/password/change", authenticate, L.passwordChange, authCtrl.changePassword);
-router.post("/auth/password-reset/request", L.resetRequestPerIp, L.resetRequestPerEmail, authCtrl.requestPasswordReset);
-router.post("/auth/password-reset/confirm", L.resetConfirm, authCtrl.confirmPasswordReset);
-router.post("/auth/google", L.google, authCtrl.googleLogin);
+router.post("/auth/password-reset/request", codeLimiter, L.resetRequestPerIp, L.resetRequestPerEmail, authCtrl.requestPasswordReset);
+router.post("/auth/password-reset/confirm", codeLimiter, L.resetConfirm, authCtrl.confirmPasswordReset);
+router.post("/auth/google", authLimiter, L.google, authCtrl.googleLogin);
 router.get("/auth/me", authenticate, authCtrl.me);
-router.post("/auth/verification/send", authenticate, L.verifySend, authCtrl.sendVerification);
-router.post("/auth/verification/verify", authenticate, L.verifyCheck, authCtrl.verifyEmail);
+router.post("/auth/verification/send", authenticate, codeLimiter, L.verifySend, authCtrl.sendVerification);
+router.post("/auth/verification/verify", authenticate, codeLimiter, L.verifyCheck, authCtrl.verifyEmail);
 
 // Users
 router.get("/users/me", authenticate, authCtrl.me);
@@ -385,6 +410,14 @@ router.get("/profile-change-requests", authenticate, requestsCtrl.listProfileCha
 router.post("/profile-change-requests", authenticate, requestsCtrl.createProfileChangeRequest);
 router.patch("/profile-change-requests/:id", authenticate, requireCap("requests.review"), requestsCtrl.updateProfileChangeRequest);
 router.delete("/profile-change-requests/:id", authenticate, requireCap("requests.review"), requestsCtrl.deleteProfileChangeRequest);
+
+// Support tickets: students can only see and reply to their own tickets.
+router.post("/support/tickets", authenticate, supportCtrl.createTicket);
+router.get("/support/tickets/mine", authenticate, supportCtrl.listMyTickets);
+router.get("/support/tickets", authenticate, requireCap("support.tickets", "requests.review"), supportCtrl.listTickets);
+router.get("/support/tickets/:id", authenticate, supportCtrl.getMyTicket);
+router.patch("/support/tickets/:id", authenticate, requireCap("support.tickets", "requests.review"), supportCtrl.updateTicket);
+router.post("/support/tickets/:id/replies", authenticate, supportCtrl.addReply);
 
 // Courses
 router.get("/courses", authenticate, coursesCtrl.listCourses);

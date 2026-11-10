@@ -47,6 +47,7 @@ export const CAPABILITIES = [
   { key: "tests.manage", group: "Content", scope: "staff", label: "General tests", hint: "Set timed tests for chosen students or aspirants and see results" },
   // Operations
   { key: "requests.review", group: "Operations", scope: "staff", label: "Review requests", hint: "Approve profile-change and other requests" },
+  { key: "support.tickets", group: "Operations", scope: "staff", label: "Manage support tickets", hint: "Read and respond to student support tickets" },
   { key: "payments.review", group: "Operations", scope: "staff", label: "Payments", hint: "Review and approve payment claims" },
   { key: "activity.view", group: "Operations", scope: "staff", label: "Activity & audit", hint: "Read the activity log and audit trail" },
   { key: "notifications.send", group: "Operations", scope: "staff", label: "Send notifications", hint: "Send notifications to users" },

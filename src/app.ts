@@ -5,8 +5,10 @@ import helmet from "helmet";
 import morgan from "morgan";
 import routes from "./routes";
 import { defaultCachePolicy } from "./lib/httpCache";
+import { apiLimiter } from "./middleware/rateLimit";
 
 const app = express();
+app.set("trust proxy", 1);
 const configuredOrigins = process.env.CORS_ORIGIN?.split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -81,7 +83,7 @@ app.use(
   })
 );
 
-app.use("/api/v1", defaultCachePolicy, routes);
+app.use("/api/v1", apiLimiter, defaultCachePolicy, routes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found" });

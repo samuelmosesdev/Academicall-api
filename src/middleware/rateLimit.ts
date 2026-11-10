@@ -1,4 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
+import expressRateLimit from "express-rate-limit";
 
 type RateLimitOptions = {
   name: string;
@@ -55,6 +56,46 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
     return next();
   };
 }
+
+/** General API limit. Health and payment webhooks are intentionally exempt. */
+export const apiLimiter = expressRateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many requests. Please wait a moment and try again.",
+    code: "RATE_LIMITED",
+  },
+  skip: (request) => {
+    const path = request.path || "";
+    return path === "/health" || path.endsWith("/health") || path.includes("/payments/webhook");
+  },
+});
+
+/** Additional per-IP limits on public sign-in and account creation endpoints. */
+export const authLimiter = expressRateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many sign-in or registration attempts. Try again in 15 minutes.",
+    code: "AUTH_RATE_LIMITED",
+  },
+});
+
+/** Per-IP limit for password reset and email verification code operations. */
+export const codeLimiter = expressRateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many verification or reset requests. Try again later.",
+    code: "CODE_RATE_LIMITED",
+  },
+});
 
 const ipKey = (request: Request) => request.ip || "unknown";
 const accountKey = (request: Request) => {

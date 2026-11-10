@@ -46,6 +46,21 @@ enum NotificationType {
   security
 }
 
+enum SupportTicketStatus {
+  open
+  in_progress
+  waiting_on_user
+  resolved
+  closed
+}
+
+enum SupportTicketPriority {
+  low
+  normal
+  high
+  urgent
+}
+
 model User {
   id                         String       @id @default(uuid())
   firebaseUid                String?      @unique // legacy/unused — hybrid Firebase auth bridge was removed
@@ -189,7 +204,7 @@ model User {
   utmeAttempts          UtmeAttempt[]
   practiceAttempts      PracticeAttempt[]
   practiceSeen          PracticeSeen[]
-  utmePatches           UtmeQuestionPatch[] @relation("UtmePatchEditor")
+  utmePatches           UtmeQuestionPatch[]    @relation("UtmePatchEditor")
   sessions              UserSession[]
   deviceTokens          DeviceToken[]
   academicResults       AcademicResult[]
@@ -197,6 +212,9 @@ model User {
   blocksMade            UserBlock[]            @relation("Blocker")
   blocksReceived        UserBlock[]            @relation("Blocked")
   restrictions          UserRestriction[]
+  supportTickets        SupportTicket[]
+  assignedTickets       SupportTicket[]        @relation("SupportAssignee")
+  supportReplies        SupportTicketReply[]
 
   @@index([role])
   @@index([department])
@@ -207,8 +225,62 @@ model User {
   @@map("users")
 }
 
+model SupportTicket {
+  id             String                @id @default(uuid())
+  userId         String
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category       String
+  subject        String
+  message        String
+  screenshotUrl  String?
+  status         SupportTicketStatus   @default(open)
+  priority       SupportTicketPriority @default(normal)
+  assigneeId     String?
+  assignee       User?                 @relation("SupportAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  internalNotes  String?
+  firstRepliedAt DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  replies        SupportTicketReply[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([assigneeId])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+model SupportTicketReply {
+  id         String        @id @default(uuid())
+  ticketId   String
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId   String
+  author     User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body       String
+  isStaff    Boolean       @default(false)
+  isInternal Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+
+  @@index([ticketId])
+  @@map("support_ticket_replies")
+}
+
+model SupportCannedReply {
+  id        String   @id @default(uuid())
+  title     String
+  body      String
+  category  String?
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("support_canned_replies")
+}
+
 model Document {
-  id                  String    @id @default(uuid())
+  id                  String          @id @default(uuid())
   institutionId       String?
   title               String
   description         String?
@@ -221,25 +293,25 @@ model Document {
   department          String?
   level               String?
   source              String? // "courseRep" | "admin" | "agent"
-  status              String    @default("pending")
+  status              String          @default("pending")
   approvedById        String?
   approvedAt          DateTime?
   uploadedById        String
-  uploadedBy          User      @relation("UploadedBy", fields: [uploadedById], references: [id])
+  uploadedBy          User            @relation("UploadedBy", fields: [uploadedById], references: [id])
   courseId            String?
-  course              Course?   @relation(fields: [courseId], references: [id])
-  openCount           Int       @default(0)
-  questionCount       Int       @default(0)
-  easyQuestionCount   Int       @default(0)
-  mediumQuestionCount Int       @default(0)
-  hardQuestionCount   Int       @default(0)
+  course              Course?         @relation(fields: [courseId], references: [id])
+  openCount           Int             @default(0)
+  questionCount       Int             @default(0)
+  easyQuestionCount   Int             @default(0)
+  mediumQuestionCount Int             @default(0)
+  hardQuestionCount   Int             @default(0)
   reactions           Json? // { like: number, ... }
   deletedAt           DateTime? // soft delete: recoverable from the Document Center
   deletedById         String?
   folderId            String? // personal uploads: the student's own MaterialFolder (null = top level)
   folder              MaterialFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
   @@index([uploadedById])
   @@index([folderId])
@@ -326,7 +398,7 @@ model Notification {
   createdAt   DateTime         @default(now())
 
   /// Set once the push dispatcher has handled it (sent, skipped or no device)
-  pushedAt     DateTime?
+  pushedAt DateTime?
 
   @@index([pushedAt, createdAt])
   @@index([userId, readByUser])
@@ -522,16 +594,16 @@ model ClassEvent {
 }
 
 model MaterialSave {
-  id         String   @id @default(uuid())
+  id         String          @id @default(uuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   materialId String?
   title      String?
   url        String?
   meta       Json?
   folderId   String? // moved into one of the student's own folders (null = grouped by course)
   folder     MaterialFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
-  createdAt  DateTime @default(now())
+  createdAt  DateTime        @default(now())
 
   @@index([userId])
   @@index([folderId])
@@ -1372,31 +1444,31 @@ model PracticeSeen {
 /// One finished UTME CBT practice session. The question bank itself is static
 /// (public/utme/*.json in the web app); this keeps each candidate's history.
 model UtmeAttempt {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// "topic" | "year" | "mixed"
-  mode        String
+  mode         String
   /// "exam" (timed, answers at the end) | "practice" (instant feedback)
-  style       String
+  style        String
   /// [{ slug, name, total, correct, score }]
-  subjects    Json
+  subjects     Json
   /// The setup the candidate picked: topics, years, question counts, time limit
-  config      Json
+  config       Json
   /// Compact answers: { "<slug>:<qid>": optionIndex }
-  answers     Json?
-  total       Int
-  correct     Int
+  answers      Json?
+  total        Int
+  correct      Int
   /// Scaled like JAMB: each subject out of 100, so four subjects make 400
-  score       Int
-  maxScore    Int
-  durationSec Int
+  score        Int
+  maxScore     Int
+  durationSec  Int
   timeLimitSec Int?
   /// { "<slug>": { "<topic>": [answered, correct] } } — feeds progress coaching
-  topicStats  Json?
+  topicStats   Json?
   /// ["<slug>:<qid>", …] questions answered wrongly — feeds the control room's most-missed list
-  missed      String[] @default([])
-  createdAt   DateTime @default(now())
+  missed       String[] @default([])
+  createdAt    DateTime @default(now())
 
   @@index([userId, createdAt])
   @@map("utme_attempts")
@@ -1444,29 +1516,29 @@ model UtmeMedia {
 // ── Safety & moderation ──────────────────────────────────────────────────────
 /// Something a user reported: a group message, house thread or reply, news comment, feed post or a person.
 model ContentReport {
-  id           String    @id @default(uuid())
-  reporterId   String?
+  id            String    @id @default(uuid())
+  reporterId    String?
   /// group_message | house_thread | house_reply | news_comment | feed_post | user
-  targetType   String
-  targetId     String
+  targetType    String
+  targetId      String
   /// The author of the reported content (or the reported person)
-  targetUserId String?
+  targetUserId  String?
   /// spam | abuse | harassment | sexual | violence | false_info | cheating | other
-  reason       String
-  note         String?
+  reason        String
+  note          String?
   /// Copy of the content at report time, so staff see it even if it's edited or removed
-  snapshot     Json?
+  snapshot      Json?
   /// Where in the app it lives, e.g. /study/BIO101
-  contextUrl   String?
+  contextUrl    String?
   /// open | actioned | dismissed
-  status       String    @default("open")
+  status        String    @default("open")
   /// hide | warn | mute | dismiss
-  action       String?
-  actionNote   String?
-  handledById  String?
+  action        String?
+  actionNote    String?
+  handledById   String?
   handledByName String?
-  handledAt    DateTime?
-  createdAt    DateTime  @default(now())
+  handledAt     DateTime?
+  createdAt     DateTime  @default(now())
 
   @@index([status, createdAt])
   @@index([targetType, targetId])
@@ -1509,18 +1581,18 @@ model UserRestriction {
 // ── Sign-in security ─────────────────────────────────────────────────────────
 /// One signed-in device. Tokens carry its id, so signing a device out revokes its token.
 model UserSession {
-  id          String    @id @default(uuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ip          String?
-  userAgent   String?
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ip         String?
+  userAgent  String?
   /// web | android | ios
-  platform    String?
+  platform   String?
   /// password | google
-  method      String?
-  createdAt   DateTime  @default(now())
-  lastSeenAt  DateTime  @default(now())
-  revokedAt   DateTime?
+  method     String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
 
   @@index([userId, revokedAt])
   @@map("user_sessions")
@@ -1578,21 +1650,21 @@ model DeviceToken {
 
 // ── UTME question reports ────────────────────────────────────────────────────
 model UtmeQuestionReport {
-  id           String    @id @default(uuid())
-  slug         String
-  qid          String
+  id             String    @id @default(uuid())
+  slug           String
+  qid            String
   /// wrong_answer | typo | missing_image | unclear | wrong_topic | other
-  reason       String
-  note         String?
-  userId       String?
-  userName     String?
+  reason         String
+  note           String?
+  userId         String?
+  userName       String?
   /// open | fixed | dismissed
-  status       String    @default("open")
-  resolution   String?
-  resolvedById String?
+  status         String    @default("open")
+  resolution     String?
+  resolvedById   String?
   resolvedByName String?
-  resolvedAt   DateTime?
-  createdAt    DateTime  @default(now())
+  resolvedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
   @@index([status, slug])
   @@index([slug, qid])
@@ -1661,31 +1733,31 @@ model BackupRun {
 
 // ── General tests (set by staff, aimed at chosen students or aspirants) ──────
 model GeneralTest {
-  id            String    @id @default(uuid())
+  id            String               @id @default(uuid())
   title         String
   instructions  String?
   /// [{ key, name, subject?, count }]
   sections      Json
   /// Frozen question set with answers: [{ key, section, s, o, a, e, … }]. Never sent to candidates with answers.
   questions     Json
-  questionCount Int       @default(0)
-  durationMin   Int       @default(30)
+  questionCount Int                  @default(0)
+  durationMin   Int                  @default(30)
   opensAt       DateTime?
   closesAt      DateTime?
   /// { roles: ["student","aspirant"], institutionIds, facultyIds, departmentIds, programIds, levels, houseIds, choiceInstitutionIds, utmeYears, plans, userIds }
   audience      Json
-  audienceCount Int       @default(0)
+  audienceCount Int                  @default(0)
   /// instant | after_close | hidden
-  showResults   String    @default("instant")
-  shuffle       Boolean   @default(true)
-  maxAttempts   Int       @default(1)
+  showResults   String               @default("instant")
+  shuffle       Boolean              @default(true)
+  maxAttempts   Int                  @default(1)
   /// draft | published | closed | archived
-  status        String    @default("draft")
+  status        String               @default("draft")
   createdById   String?
   createdByName String?
   publishedAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
   attempts      GeneralTestAttempt[]
 
   @@index([status, opensAt])
@@ -1746,25 +1818,25 @@ model Office {
 
 /// Work assigned to a staff member by an admin or by their supervisor.
 model StaffTask {
-  id           String    @id @default(uuid())
-  title        String
-  description  String?
+  id          String    @id @default(uuid())
+  title       String
+  description String?
   /// low | normal | high | urgent
-  priority     String    @default("normal")
+  priority    String    @default("normal")
   /// todo | in_progress | blocked | done
-  status       String    @default("todo")
-  officeId     String?
-  office       Office?   @relation(fields: [officeId], references: [id], onDelete: SetNull)
-  assigneeId   String
-  assignee     User      @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
-  createdById  String?
-  createdBy    User?     @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  dueAt        DateTime?
-  completedAt  DateTime?
+  status      String    @default("todo")
+  officeId    String?
+  office      Office?   @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  assigneeId  String
+  assignee    User      @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  createdById String?
+  createdBy   User?     @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  dueAt       DateTime?
+  completedAt DateTime?
   /// The assignee's progress note
-  note         String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  note        String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([assigneeId, status])
   @@index([officeId])
