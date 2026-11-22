@@ -82,10 +82,13 @@ export async function createAnnouncement(req: Request, res: Response) {
       where: { id: req.user.id },
       select: { name: true, nickname: true },
     });
+    // A Course Rep's announcement lives only in the programme page (a feed post). It is not saved as a platform
+    // announcement, so it never reaches the notification / announcements page.
+    const repOnly = req.user.role === "courseRep";
     const announcement = await prisma.$transaction(async (tx) => {
-      const created = await tx.announcement.create({ data: { ...body, createdBy: req.user!.id } });
+      const created = repOnly ? null : await tx.announcement.create({ data: { ...body, createdBy: req.user!.id } });
       if (body.audience === "department" && body.department) {
-        await tx.feedPost.create({
+        const post = await tx.feedPost.create({
           data: {
             kind: "course",
             title: body.title,
@@ -102,6 +105,7 @@ export async function createAnnouncement(req: Request, res: Response) {
             reactions: [],
           },
         });
+        return created ?? post;
       }
       return created;
     });

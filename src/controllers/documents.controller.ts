@@ -312,10 +312,14 @@ export async function createDocument(req: Request, res: Response) {
           where: { id: body.courseId },
           select: { department: true, level: true },
         });
+        // The course is fine if it is on the Course Rep's own course list, or belongs to their programme and level.
+        const onOwnList = await prisma.enrollment.findFirst({ where: { userId: req.user.id, courseId: body.courseId }, select: { id: true } });
         if (
-          !course ||
-          normalizeScope(course.department) !== normalizeScope(assignedProgram) ||
-          !levelsMatch(course.level, level)
+          !onOwnList && (
+            !course ||
+            normalizeScope(course.department) !== normalizeScope(assignedProgram) ||
+            !levelsMatch(course.level, level)
+          )
         ) {
           return res.status(403).json({ error: "Course Reps can only attach materials to courses in their assigned program and level" });
         }

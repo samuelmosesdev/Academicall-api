@@ -400,7 +400,8 @@ router.delete("/documents/:id", authenticate, docsCtrl.deleteDocument);
 router.get("/announcements", authenticate, announcementsCtrl.listAnnouncements);
 router.get("/announcements/reads", authenticate, announcementsCtrl.listAnnouncementReads);
 router.post("/announcements/:id/read", authenticate, announcementsCtrl.markAnnouncementRead);
-router.post("/announcements", authenticate, requireCap("announcements.publish"), announcementsCtrl.createAnnouncement);
+// Course Reps can post to their own programme without admin-granted permission; the controller enforces scope.
+router.post("/announcements", authenticate, (req, res, next) => (req.user?.role === "courseRep" ? next() : requireCap("announcements.publish")(req, res, next)), announcementsCtrl.createAnnouncement);
 router.patch("/announcements/:id", authenticate, requireCap("announcements.publish"), announcementsCtrl.updateAnnouncement);
 router.delete("/announcements/:id", authenticate, requireCap("announcements.publish"), announcementsCtrl.deleteAnnouncement);
 router.get("/requests", authenticate, requestsCtrl.listRequests);
