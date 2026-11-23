@@ -308,6 +308,8 @@ model Document {
   reactions           Json? // { like: number, ... }
   deletedAt           DateTime? // soft delete: recoverable from the Document Center
   deletedById         String?
+  courseCode          String? // "BIO 401": set by Course Reps (works for courses that are not in the catalogue too)
+  courseTitle         String?
   folderId            String? // personal uploads: the student's own MaterialFolder (null = top level)
   folder              MaterialFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   createdAt           DateTime        @default(now())
@@ -317,6 +319,7 @@ model Document {
   @@index([folderId])
   @@index([deletedAt])
   @@index([courseId])
+  @@index([courseCode])
   @@index([status])
   @@index([institutionId, department, level])
   @@map("documents")
@@ -610,7 +613,7 @@ model MaterialSave {
   @@map("material_saves")
 }
 
-/// A student's own folder in My materials. Folders can sit inside folders (max 3 deep).
+/// A student's own folder in My materials. Folders can sit inside folders (max 4 deep).
 model MaterialFolder {
   id        String           @id @default(uuid())
   userId    String
@@ -621,12 +624,22 @@ model MaterialFolder {
   name      String
   color     String           @default("violet")
   position  Int              @default(0)
+  /// "programme" | "semester" | "course" for folders Academicall builds for the student; null for their own folders
+  kind       String?
+  /// Stable identity of an automatic folder, so it is never created twice (e.g. "programme:400", "sem:400:first", "course:BIO 401")
+  autoKey    String?
+  courseCode String?
+  semester   String? // "first" | "second"
+  pinned     Boolean          @default(false) // shown on the Library dashboard
+  pinnedAt   DateTime?
   documents Document[]
   saves     MaterialSave[]
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
+  @@unique([userId, autoKey])
   @@index([userId, parentId])
+  @@index([userId, pinned])
   @@map("material_folders")
 }
 

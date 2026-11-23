@@ -19,6 +19,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { HttpError, handle, pageParams } from "../lib/http";
+import { deleteCourseFolder, syncCourseFolders } from "../lib/courseFolders";
 
 export const FREE_COURSE_LIMIT = 5;
 const isPaid = (plan?: string | null) => plan === "pro" || plan === "annual";
@@ -225,6 +226,8 @@ export async function addCourseFor(userId: string, input: { courseId?: string | 
       data: { userId, courseId: course?.id || null, courseCode: code || null, courseTitle: title.slice(0, 200), source: course ? "catalogue" : input.source === "ai" ? "ai" : "custom" },
       include: { course: true },
     });
+    // Build / restore the course's folder in the student's Documents.
+    await syncCourseFolders(userId, { restoreCodes: [code] }).catch((e) => console.error("[course-folders] sync failed", e));
     return enrollmentOut(row);
   } catch (err: any) {
     if (err?.code === "P2002") throw new HttpError(409, `${code || title} is already on your list`, "duplicate");
@@ -271,5 +274,10 @@ export const removeMyCourse = handle(async (req: Request, res: Response) => {
   const row = await prisma.enrollment.findFirst({ where: { id: String(req.params.id), userId: req.user!.id } });
   if (!row) throw new HttpError(404, "That course isn't on your list");
   await prisma.enrollment.delete({ where: { id: row.id } });
+  // The course's folder (and everything in it) stays unless the student ticks "Delete the folder too" (?deleteFolder=1).
+  if (req.query.deleteFolder === "1" || req.query.deleteFolder === "true") {
+    const code = row.courseCode || (row.courseId ? (await prisma.course.findUnique({ where: { id: row.courseId }, select: { code: true } }))?.code : null);
+    if (code) await deleteCourseFolder(req.user!.id, code);
+  }
   res.status(204).send();
 });

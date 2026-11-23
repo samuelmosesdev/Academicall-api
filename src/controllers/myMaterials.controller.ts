@@ -2,16 +2,18 @@
  * My materials: a student's own library.
  *  - personal uploads (Document with source "personal")
  *  - materials saved from the Programme page (MaterialSave)
- *  - their own folders (MaterialFolder), up to 3 deep, that hold both
+ *  - their own folders (MaterialFolder), up to 4 deep, that hold both
  *
  * Whether uploading is paid is decided in Admin → Billing (feature "materialUploads").
  */
 import { Request, Response } from "express";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { getBilling, premiumStatus } from "../lib/billing";
+import { rememberDismissed, syncCourseFolders } from "../lib/courseFolders";
 
-export const MY_MATERIALS_LIMITS = { maxFiles: 500, maxFileMb: 25, maxFolders: 200, maxDepth: 3 };
+export const MY_MATERIALS_LIMITS = { maxFiles: 500, maxFileMb: 25, maxFolders: 200, maxDepth: 4 };
 const COLORS = ["violet", "lemon", "aqua", "sand", "rose", "ink"] as const;
 
 const STAFF = ["admin", "alphaAgent", "agent"];
@@ -77,6 +79,8 @@ export async function overview(req: Request, res: Response) {
   if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
   try {
     const userId = req.user.id;
+    // Build (only if missing) the [Programme] [Level] / semester / course folders before listing.
+    await syncCourseFolders(userId).catch((err) => console.error("[course-folders] sync failed", err));
     const [folders, uploads, saves, access] = await Promise.all([
       prisma.materialFolder.findMany({ where: { userId }, orderBy: [{ position: "asc" }, { name: "asc" }] }),
       prisma.document.findMany({
@@ -98,6 +102,7 @@ const folderSchema = z.object({
   name: z.string().trim().min(1, "Give the folder a name").max(60, "Keep folder names under 60 characters"),
   color: z.enum(COLORS).optional(),
   parentId: z.string().min(1).nullable().optional(),
+  pinned: z.boolean().optional(),
 });
 
 /** POST /my-materials/folders */
@@ -133,7 +138,9 @@ export async function updateFolder(req: Request, res: Response) {
         if (depth > MY_MATERIALS_LIMITS.maxDepth) return res.status(400).json({ error: `Folders can go ${MY_MATERIALS_LIMITS.maxDepth} levels deep.` });
       }
     }
-    const updated = await prisma.materialFolder.update({ where: { id: folder!.id }, data: body });
+    const data: Prisma.MaterialFolderUncheckedUpdateInput = { ...body };
+    if (body.pinned !== undefined) data.pinnedAt = body.pinned ? new Date() : null;
+    const updated = await prisma.materialFolder.update({ where: { id: folder!.id }, data });
     res.json({ folder: updated });
   } catch (err) { fail(res, err); }
 }
@@ -151,6 +158,8 @@ export async function deleteFolder(req: Request, res: Response) {
       prisma.materialFolder.updateMany({ where: { parentId: folder!.id, userId }, data: { parentId } }),
       prisma.materialFolder.delete({ where: { id: folder!.id } }),
     ]);
+    // An automatic folder the student deletes on purpose is not rebuilt.
+    if (folder!.autoKey) await rememberDismissed(userId, folder!.autoKey);
     res.status(204).send();
   } catch (err) { fail(res, err); }
 }
@@ -215,5 +224,24 @@ export async function renameSave(req: Request, res: Response) {
     const r = await prisma.materialSave.updateMany({ where: { id: String(req.params.id), userId: req.user.id }, data: body });
     if (!r.count) return res.status(404).json({ error: "Material not found" });
     res.json({ ok: true });
+  } catch (err) { fail(res, err); }
+}
+
+/** GET /my-materials/pinned — the folders pinned to the Library dashboard, with how many files are inside. */
+export async function pinnedFolders(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: "Unauthenticated" });
+  try {
+    const userId = req.user.id;
+    const folders = await prisma.materialFolder.findMany({ where: { userId, pinned: true }, orderBy: [{ pinnedAt: "desc" }, { name: "asc" }] });
+    const counts = await Promise.all(folders.map(async (f) => {
+      const [saves, uploads, subfolders] = await Promise.all([
+        prisma.materialSave.count({ where: { userId, folderId: f.id } }),
+        prisma.document.count({ where: { uploadedById: userId, folderId: f.id, source: "personal", deletedAt: null } }),
+        prisma.materialFolder.count({ where: { userId, parentId: f.id } }),
+      ]);
+      return { ...f, fileCount: saves + uploads, folderCount: subfolders };
+    }));
+    res.setHeader("Cache-Control", "no-store, private");
+    res.json({ folders: counts });
   } catch (err) { fail(res, err); }
 }

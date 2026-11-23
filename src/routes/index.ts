@@ -369,6 +369,7 @@ router.get("/secretariat/activity", authenticate, secCtrl.requireSecretariat, se
 // Documents
 // My materials: students' own uploads, saved materials and folders
 router.get("/my-materials", authenticate, myMaterialsCtrl.overview);
+router.get("/my-materials/pinned", authenticate, myMaterialsCtrl.pinnedFolders);
 router.post("/my-materials/folders", authenticate, myMaterialsCtrl.createFolder);
 router.patch("/my-materials/folders/:id", authenticate, myMaterialsCtrl.updateFolder);
 router.delete("/my-materials/folders/:id", authenticate, myMaterialsCtrl.deleteFolder);

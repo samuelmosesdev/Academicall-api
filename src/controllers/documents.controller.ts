@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { publishToScope } from "../lib/realtime";
+import { fanOutMaterial, normCode } from "../lib/courseFolders";
 import { DEFAULT_INSTITUTION_ID, institutionOf, norm, normLevel, programmeScope, programmeScopeKey } from "../lib/scope";
 import { hasCap } from "../lib/access";
 import { MY_MATERIALS_LIMITS, personalUploadAccess } from "./myMaterials.controller";
@@ -132,6 +133,8 @@ const createSchema = z.object({
   fileUrl: z.string().url().optional().nullable(),
   thumbnailUrl: z.string().url().optional().nullable(),
   courseId: z.string().min(1).optional().nullable(),
+  courseCode: z.string().trim().max(20).optional().nullable(),
+  courseTitle: z.string().trim().max(200).optional().nullable(),
   source: z.string().optional(),
   fileName: z.string().optional().nullable(),
   fileSize: z.number().int().nonnegative().optional().nullable(),
@@ -326,6 +329,13 @@ export async function createDocument(req: Request, res: Response) {
       }
     }
     const { program: requestedProgram, folderId: _folderId, ...documentBody } = body;
+    // Keep the course code on the material (a catalogue course supplies its own).
+    if (body.courseId && !isPersonalUpload) {
+      const c = await prisma.course.findUnique({ where: { id: body.courseId }, select: { code: true, title: true } });
+      documentBody.courseCode = c?.code ?? documentBody.courseCode ?? null;
+      documentBody.courseTitle = c?.title ?? documentBody.courseTitle ?? null;
+    }
+    if (documentBody.courseCode) documentBody.courseCode = normCode(documentBody.courseCode);
     const status = isPersonalUpload || isCourseRep
       ? "approved"
       : body.status || (staff || uploader.autoPublish ? "approved" : "pending");
@@ -356,6 +366,10 @@ export async function createDocument(req: Request, res: Response) {
     });
     broadcastMaterial(document, "created");
     res.status(201).json({ document });
+    // A Course Rep's material with a course code lands in each student's folder for that course.
+    if (document.source === "courseRep" && document.status === "approved") {
+      void fanOutMaterial(document.id).catch((err) => console.error("[course-folders] fan-out failed", err));
+    }
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
     console.error(err);
