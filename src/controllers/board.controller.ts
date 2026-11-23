@@ -7,12 +7,32 @@
  * Settings pick the default background image, whether slides rotate, and how fast.
  */
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { handle, HttpError } from "../lib/http";
 import { audit } from "../lib/audit";
 
 const SETTINGS_KEY = "dashboardBoard";
-const DEFAULT_SETTINGS = { backgroundUrl: null as string | null, rotate: true, intervalSec: 7, showGreeting: true };
+const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a colour like #1a2b3c");
+const designSchema = z.object({
+  mode: z.enum(["solid", "gradient"]).default("solid"),
+  stops: z.array(z.object({ color: hex, at: z.number().min(0).max(100) })).min(1).max(4),
+  type: z.enum(["linear", "radial", "conic"]).default("linear"),
+  angle: z.number().int().min(0).max(360).default(135),
+  blend: z.number().int().min(0).max(100).default(100),
+  titleColor: hex.nullish(),
+  bodyColor: hex.nullish(),
+  linkColor: hex.nullish(),
+  buttonBg: hex.nullish(),
+});
+type Design = z.infer<typeof designSchema>;
+const DEFAULT_SETTINGS = {
+  backgroundUrl: null as string | null,
+  rotate: true,
+  intervalSec: 7,
+  showGreeting: true,
+  lectureBox: null as Design | null,
+};
 
 async function readSettings() {
   const row = await prisma.setting.findUnique({ where: { key: SETTINGS_KEY } });
@@ -55,7 +75,7 @@ function parseTheme(raw?: string | null): { theme: ThemeName; titleBold: boolean
 const slideOut = (s: any) => {
   const legacy = parseTheme(s.theme);
   return {
-  id: s.id, kind: s.kind, title: s.title, body: s.body, imageUrl: s.imageUrl, ctaLabel: s.ctaLabel, ctaUrl: s.ctaUrl, theme: legacy.theme, titleBold: Boolean(s.titleBold) || legacy.titleBold,
+  id: s.id, kind: s.kind, title: s.title, body: s.body, imageUrl: s.imageUrl, design: s.design ?? null, ctaLabel: s.ctaLabel, ctaUrl: s.ctaUrl, theme: legacy.theme, titleBold: Boolean(s.titleBold) || legacy.titleBold,
   audience: s.audience, active: s.active, sortOrder: s.sortOrder, startsAt: s.startsAt, endsAt: s.endsAt, createdByName: s.createdByName, updatedAt: s.updatedAt,
   };
 };
@@ -78,6 +98,7 @@ const slideSchema = z.object({
   theme: z.enum(THEME_NAMES).default("midnight"),
   /** Show the headline in bold. */
   titleBold: z.boolean().default(false),
+  design: designSchema.nullable().optional(),
   audience: z.enum(["students", "aspirants", "all"]).default("students"),
   active: z.boolean().default(true),
   startsAt: z.coerce.date().optional().nullable(),
@@ -96,7 +117,7 @@ export const createSlide = handle(async (req, res) => {
   check(body);
   const last = await prisma.dashboardSlide.aggregate({ _max: { sortOrder: true } });
   const slide = await prisma.dashboardSlide.create({
-    data: { ...body, ...(body.kind === "image" ? { title: body.title || null, body: null, ctaLabel: null } : {}), sortOrder: (last._max.sortOrder ?? -1) + 1, createdById: req.user!.id, createdByName: req.user!.name || req.user!.email },
+    data: { ...body, design: body.design ?? Prisma.JsonNull, ...(body.kind === "image" ? { title: body.title || null, body: null, ctaLabel: null } : {}), sortOrder: (last._max.sortOrder ?? -1) + 1, createdById: req.user!.id, createdByName: req.user!.name || req.user!.email },
   });
   await audit(req.user, "board.slide.create", { id: slide.id, label: slide.title || "Image slide" });
   res.status(201).json({ slide: slideOut(slide) });
@@ -109,6 +130,7 @@ export const updateSlide = handle(async (req, res) => {
   const body = slideSchema.partial().parse(req.body || {});
   check({ ...existing, ...body } as any);
   const data: Record<string, unknown> = { ...body };
+  if (body.design !== undefined) data.design = body.design === null ? Prisma.JsonNull : body.design;
   if (body.theme === undefined && existing.theme.includes(";")) {
     const legacy = parseTheme(existing.theme);
     data.theme = legacy.theme;
@@ -139,6 +161,7 @@ export const saveSettings = handle(async (req, res) => {
     rotate: z.boolean().optional(),
     intervalSec: z.coerce.number().int().min(3).max(30).optional(),
     showGreeting: z.boolean().optional(),
+    lectureBox: designSchema.nullable().optional(),
   }).parse(req.body || {});
   const value = { ...(await readSettings()), ...body };
   await prisma.setting.upsert({ where: { key: SETTINGS_KEY }, create: { key: SETTINGS_KEY, value }, update: { value } });

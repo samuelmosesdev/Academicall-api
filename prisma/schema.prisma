@@ -1389,6 +1389,8 @@ model DashboardSlide {
   ctaUrl        String?
   theme         String    @default("midnight") // midnight | violet | lemon | aqua
   titleBold     Boolean   @default(false)
+  /// Custom look chosen by staff; null means use the existing theme.
+  design        Json?
   audience      String    @default("students") // students | aspirants | all
   active        Boolean   @default(true)
   sortOrder     Int       @default(0)
